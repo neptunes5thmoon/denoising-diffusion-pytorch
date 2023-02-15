@@ -948,6 +948,7 @@ class Dataset(Dataset):
         image_size,
         exts=["jpg", "jpeg", "png", "tiff"],
         augment_horizontal_flip=False,
+        augment_vertical_flip=False,
         convert_image_to=None,
     ):
         super().__init__()
@@ -964,9 +965,9 @@ class Dataset(Dataset):
         self.transform = T.Compose(
             [
                 T.Lambda(maybe_convert_fn),
-                T.Resize(image_size),
+                T.RandomCrop(image_size, padding=0),
                 T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-                T.CenterCrop(image_size),
+                T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
                 T.ToTensor(),
             ]
         )
@@ -992,6 +993,7 @@ class Trainer(object):
         train_batch_size=16,
         gradient_accumulate_every=1,
         augment_horizontal_flip=True,
+        augment_vertical_flip=True,
         train_lr=1e-4,
         train_num_steps=100000,
         ema_update_every=10,
@@ -1050,6 +1052,7 @@ class Trainer(object):
             folder,
             self.image_size,
             augment_horizontal_flip=augment_horizontal_flip,
+            augment_vertical_flip=augment_vertical_flip,
             convert_image_to=convert_image_to,
         )
 
