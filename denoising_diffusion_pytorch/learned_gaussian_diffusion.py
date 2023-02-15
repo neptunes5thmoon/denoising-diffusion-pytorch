@@ -1,11 +1,14 @@
-import torch
 from collections import namedtuple
-from math import pi, sqrt, log as ln
 from inspect import isfunction
-from torch import nn, einsum
-from einops import rearrange
+from math import log as ln
+from math import pi, sqrt
 
-from denoising_diffusion_pytorch.denoising_diffusion_pytorch import GaussianDiffusion, extract, unnormalize_to_zero_to_one
+import torch
+from einops import rearrange
+from torch import einsum, nn
+
+from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
+    GaussianDiffusion, extract, unnormalize_to_zero_to_one)
 
 # constants
 

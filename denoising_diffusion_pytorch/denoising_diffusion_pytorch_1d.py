@@ -1,15 +1,13 @@
 import math
-from random import random
-from functools import partial
 from collections import namedtuple
+from functools import partial
+from random import random
 
 import torch
-from torch import nn, einsum
 import torch.nn.functional as F
-
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
-
+from torch import einsum, nn
 from tqdm.auto import tqdm
 
 # constants

@@ -1,18 +1,16 @@
-import math
 import copy
+import math
+from collections import namedtuple
+from functools import partial
+from multiprocessing import cpu_count
 from pathlib import Path
 from random import random
-from functools import partial
-from collections import namedtuple
-from multiprocessing import cpu_count
 
 import torch
-from torch import nn, einsum
 import torch.nn.functional as F
-
 from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
-
+from torch import einsum, nn
 from tqdm.auto import tqdm
 
 # constants

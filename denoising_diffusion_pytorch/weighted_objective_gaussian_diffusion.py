@@ -1,9 +1,11 @@
-import torch
 from inspect import isfunction
-from torch import nn, einsum
-from einops import rearrange
 
-from denoising_diffusion_pytorch.denoising_diffusion_pytorch import GaussianDiffusion
+import torch
+from einops import rearrange
+from torch import einsum, nn
+
+from denoising_diffusion_pytorch.denoising_diffusion_pytorch import \
+    GaussianDiffusion
 
 # helper functions
 
