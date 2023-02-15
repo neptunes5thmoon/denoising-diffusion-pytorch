@@ -893,13 +893,16 @@ class Dataset(Dataset):
         exts=["jpg", "jpeg", "png", "tiff"],
         augment_horizontal_flip=False,
         augment_vertical_flip=False,
+        load_to_ram=False,
         convert_image_to=None,
     ):
         super().__init__()
         self.folder = folder
         self.image_size = image_size
         self.paths = [p for ext in exts for p in Path(f"{folder}").glob(f"**/*.{ext}")]
-
+        self.load_to_ram = load_to_ram
+        if self.load_to_ram:
+            self.imgs = [Image.open(path) for path in self.paths]
         maybe_convert_fn = (
             partial(convert_image_to_fn, convert_image_to)
             if exists(convert_image_to)
@@ -920,8 +923,11 @@ class Dataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, index):
-        path = self.paths[index]
-        img = Image.open(path)
+        if self.load_to_ram:
+            img = self.imgs[index]
+        else:
+            path = self.paths[index]
+            img = Image.open(path)
         return self.transform(img)
 
 
