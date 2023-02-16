@@ -1,10 +1,9 @@
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     GaussianDiffusion,
-    Unet,
     Trainer,
     Dataset,
-    DataLoader
 )
+from denoising_diffusion_pytorch.architecture import Unet
 from denoising_diffusion_pytorch.learned_gaussian_diffusion import (
     LearnedGaussianDiffusion,
 )
@@ -24,4 +23,3 @@ from denoising_diffusion_pytorch.denoising_diffusion_pytorch_1d import (
     Unet1D,
     Trainer1D,
     Dataset1D,
-)
