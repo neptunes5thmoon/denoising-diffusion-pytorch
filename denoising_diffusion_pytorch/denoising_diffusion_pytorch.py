@@ -5,7 +5,7 @@ from random import random
 from functools import partial
 from collections import namedtuple
 from multiprocessing import cpu_count
-from convenience import divisible_by
+
 import torch
 from torch import nn
 from torch.cuda.amp import autocast
@@ -34,7 +34,7 @@ from accelerate import Accelerator
 from denoising_diffusion_pytorch.attend import Attend
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 
-from denoising_diffusion_pytorch.convenience import cycle, default, exists, identity
+from denoising_diffusion_pytorch.convenience import cycle, default, exists, identity, divisible_by
 from denoising_diffusion_pytorch.version import __version__
 
 # constants
