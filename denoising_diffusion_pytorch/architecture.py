@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
 from torch import nn
+from denoising_diffusion_pytorch.attend import Attend
 
 from denoising_diffusion_pytorch.convenience import (
     default,
@@ -13,8 +14,6 @@ from denoising_diffusion_pytorch.convenience import (
     divisible_by,
     cast_tuple,
 )
-
-# small helper modules
 
 
 class Residual(nn.Module):
