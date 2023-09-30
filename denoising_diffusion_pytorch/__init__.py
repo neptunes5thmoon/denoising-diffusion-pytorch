@@ -23,3 +23,4 @@ from denoising_diffusion_pytorch.denoising_diffusion_pytorch_1d import (
     Unet1D,
     Trainer1D,
     Dataset1D,
+)
