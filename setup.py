@@ -23,7 +23,7 @@ setup(
         "torch",
         "torchvision",
         "tqdm",
-        "zarr"
+        "zarr",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",

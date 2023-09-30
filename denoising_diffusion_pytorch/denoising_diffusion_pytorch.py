@@ -32,7 +32,13 @@ from accelerate import Accelerator
 
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 
-from denoising_diffusion_pytorch.convenience import cycle, default, exists, identity, divisible_by
+from denoising_diffusion_pytorch.convenience import (
+    cycle,
+    default,
+    exists,
+    identity,
+    divisible_by,
+)
 from denoising_diffusion_pytorch.version import __version__
 
 # constants
@@ -53,8 +59,6 @@ def num_to_groups(num, divisor):
     if remainder > 0:
         arr.append(remainder)
     return arr
-
-
 
 
 # normalization functions
@@ -535,8 +539,6 @@ class GaussianDiffusion(nn.Module):
 
         img = self.normalize(img)
         return self.p_losses(img, t, *args, **kwargs)
-
-
 
 
 # trainer class

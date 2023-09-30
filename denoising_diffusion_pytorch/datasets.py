@@ -9,10 +9,12 @@ from torchvision import transforms as T
 from PIL import Image
 from denoising_diffusion_pytorch.convenience import exists
 
+
 def convert_image_to_fn(img_type, image):
     if image.mode != img_type:
         return image.convert(img_type)
     return image
+
 
 class SimpleDataset(Dataset):
     def __init__(
@@ -67,7 +69,7 @@ class ZarrDataset(Dataset):
         image_size,
         augment_horizontal_flip=False,
         augment_vertical_flip=False,
-        load_to_ram = True
+        load_to_ram=True,
     ):
         super().__init__()
         self.folder = folder
@@ -86,11 +88,11 @@ class ZarrDataset(Dataset):
         self.transform = T.Compose(
             [
                 T.ToTensor(),
-                #RandomNonEmptyCrop(image_size, padding=0),
+                # RandomNonEmptyCrop(image_size, padding=0),
                 T.RandomCrop(image_size, padding=0),
                 T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
-                #T.ToTensor(),
+                # T.ToTensor(),
             ]
         )
         self.flat_index = []
@@ -100,12 +102,12 @@ class ZarrDataset(Dataset):
 
     def __len__(self):
         return len(self.flat_index)
-    
+
     def __getitem__(self, index):
         crop_idx, z = self.flat_index[index]
         if self.load_to_ram:
             arr = self.crops[crop_idx]
         else:
             arr = zarr.load(str(self.array_paths[crop_idx]))["label"]
-        img = arr[...,z].transpose((1,2,0))
+        img = arr[..., z].transpose((1, 2, 0))
         return self.transform(img)
