@@ -10,12 +10,11 @@ import torch
 from torch import nn
 from torch.cuda.amp import autocast
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-
+from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from einops import reduce
 from ema_pytorch import EMA
-from PIL import Image
+
 from torch import nn
 
 from torch.optim import Adam
@@ -31,7 +30,6 @@ from ema_pytorch import EMA
 
 from accelerate import Accelerator
 
-from denoising_diffusion_pytorch.attend import Attend
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 
 from denoising_diffusion_pytorch.convenience import cycle, default, exists, identity, divisible_by
@@ -57,10 +55,6 @@ def num_to_groups(num, divisor):
     return arr
 
 
-def convert_image_to_fn(img_type, image):
-    if image.mode != img_type:
-        return image.convert(img_type)
-    return image
 
 
 # normalization functions
@@ -543,53 +537,6 @@ class GaussianDiffusion(nn.Module):
         return self.p_losses(img, t, *args, **kwargs)
 
 
-# dataset classes
-
-
-class Dataset(Dataset):
-    def __init__(
-        self,
-        folder,
-        image_size,
-        exts=["jpg", "jpeg", "png", "tiff"],
-        augment_horizontal_flip=False,
-        augment_vertical_flip=False,
-        load_to_ram=False,
-        convert_image_to=None,
-    ):
-        super().__init__()
-        self.folder = folder
-        self.image_size = image_size
-        self.paths = [p for ext in exts for p in Path(f"{folder}").glob(f"**/*.{ext}")]
-        self.load_to_ram = load_to_ram
-        if self.load_to_ram:
-            self.imgs = [Image.open(path) for path in self.paths]
-        maybe_convert_fn = (
-            partial(convert_image_to_fn, convert_image_to)
-            if exists(convert_image_to)
-            else nn.Identity()
-        )
-
-        self.transform = T.Compose(
-            [
-                T.Lambda(maybe_convert_fn),
-                T.RandomCrop(image_size, padding=0),
-                T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-                T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
-                T.ToTensor(),
-            ]
-        )
-
-    def __len__(self):
-        return len(self.paths)
-
-    def __getitem__(self, index):
-        if self.load_to_ram:
-            img = self.imgs[index]
-        else:
-            path = self.paths[index]
-            img = Image.open(path)
-        return self.transform(img)
 
 
 # trainer class
@@ -599,12 +546,10 @@ class Trainer(object):
     def __init__(
         self,
         diffusion_model,
-        folder,
+        dataset,
         *,
         train_batch_size=16,
         gradient_accumulate_every=1,
-        augment_horizontal_flip=True,
-        augment_vertical_flip=True,
         train_lr=1e-4,
         train_num_steps=100000,
         ema_update_every=10,
@@ -616,7 +561,6 @@ class Trainer(object):
         amp=False,
         mixed_precision_type="fp16",
         split_batches=True,
-        convert_image_to=None,
         calculate_fid=True,
         inception_block_idx=2048,
         max_grad_norm=1.0,
@@ -659,13 +603,7 @@ class Trainer(object):
 
         # dataset and dataloader
 
-        self.ds = Dataset(
-            folder,
-            self.image_size,
-            augment_horizontal_flip=augment_horizontal_flip,
-            augment_vertical_flip=augment_vertical_flip,
-            convert_image_to=convert_image_to,
-        )
+        self.ds = dataset
 
         assert (
             len(self.ds) >= 100
