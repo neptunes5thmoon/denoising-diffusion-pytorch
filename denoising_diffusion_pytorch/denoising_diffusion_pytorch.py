@@ -7,6 +7,7 @@ from collections import namedtuple
 from multiprocessing import cpu_count
 
 import torch
+import zarr
 from torch import nn
 from torch.cuda.amp import autocast
 import torch.nn.functional as F
@@ -721,7 +722,10 @@ class Trainer(object):
     def train(self):
         accelerator = self.accelerator
         device = accelerator.device
-
+        if self.channels > 3:
+            checkpoint_group = zarr.group(
+                store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr"))
+            )
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -770,13 +774,31 @@ class Trainer(object):
                             )
 
                         all_images = torch.cat(all_images_list, dim=0)
-
-                        utils.save_image(
-                            all_images,
-                            str(self.results_folder / f"sample-{milestone}.png"),
-                            nrow=int(math.sqrt(self.num_samples)),
-                        )
-
+                        if self.channels <= 3:
+                            utils.save_image(
+                                all_images,
+                                str(self.results_folder / f"sample-{milestone}.png"),
+                                nrow=int(math.sqrt(self.num_samples)),
+                            )
+                        else:
+                            grid_lists = [
+                                utils.make_grid(
+                                    all_images[:, ch : ch + 1, ...],
+                                    nrow=int(math.sqrt(self.num_samples)),
+                                )[0]
+                                for ch in range(all_images.shape[1])
+                            ]
+                            grids = torch.stack(grid_lists, dim=0)
+                            np_grids = (
+                                grids.mul(255)
+                                .add_(0.5)
+                                .clamp_(0, 255)
+                                .to("cpu", torch.unit8)
+                                .numpy()
+                            )
+                            checkpoint_group.create_dataset(
+                                name=f"{milestone:03d}", data=np_grids
+                            )
                         # whether to calculate fid
 
                         if self.calculate_fid:
