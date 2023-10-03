@@ -1,44 +1,33 @@
 import math
-
+from collections import namedtuple
+from functools import partial
+from multiprocessing import cpu_count
 from pathlib import Path
 from random import random
-from functools import partial
-from collections import namedtuple
-from multiprocessing import cpu_count
 
 import torch
+import torch.nn.functional as F
+import zarr
+from accelerate import Accelerator
+from einops import rearrange, reduce
+from ema_pytorch import EMA
+from PIL import Image
 from torch import nn
 from torch.cuda.amp import autocast
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from accelerate import Accelerator
-from einops import reduce
-from ema_pytorch import EMA
-
-from torch import nn
-
 from torch.optim import Adam
-
-from torchvision import transforms as T, utils
-
-from einops import rearrange, reduce
-
-
-from PIL import Image
+from torch.utils.data import DataLoader
+from torchvision import transforms as T
+from torchvision import utils
 from tqdm.auto import tqdm
-from ema_pytorch import EMA
-
-from accelerate import Accelerator
-
-from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 
 from denoising_diffusion_pytorch.convenience import (
     cycle,
     default,
+    divisible_by,
     exists,
     identity,
-    divisible_by,
 )
+from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.version import __version__
 
 # constants
@@ -721,7 +710,10 @@ class Trainer(object):
     def train(self):
         accelerator = self.accelerator
         device = accelerator.device
-
+        if self.channels > 3:
+            checkpoint_group = zarr.group(
+                store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr"))
+            )
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -758,9 +750,8 @@ class Trainer(object):
                         self.step, self.save_and_sample_every
                     ):
                         self.ema.ema_model.eval()
-
+                        milestone = self.step // self.save_and_sample_every
                         with torch.inference_mode():
-                            milestone = self.step // self.save_and_sample_every
                             batches = num_to_groups(self.num_samples, self.batch_size)
                             all_images_list = list(
                                 map(
@@ -770,13 +761,31 @@ class Trainer(object):
                             )
 
                         all_images = torch.cat(all_images_list, dim=0)
-
-                        utils.save_image(
-                            all_images,
-                            str(self.results_folder / f"sample-{milestone}.png"),
-                            nrow=int(math.sqrt(self.num_samples)),
-                        )
-
+                        if self.channels <= 3:
+                            utils.save_image(
+                                all_images,
+                                str(self.results_folder / f"sample-{milestone}.png"),
+                                nrow=int(math.sqrt(self.num_samples)),
+                            )
+                        else:
+                            grid_lists = [
+                                utils.make_grid(
+                                    all_images[:, ch : ch + 1, ...],
+                                    nrow=int(math.sqrt(self.num_samples)),
+                                )[0]
+                                for ch in range(all_images.shape[1])
+                            ]
+                            grids = torch.stack(grid_lists, dim=0)
+                            np_grids = (
+                                grids.mul(255)
+                                .add_(0.5)
+                                .clamp_(0, 255)
+                                .to("cpu", torch.uint8)
+                                .numpy()
+                            )
+                            checkpoint_group.create_dataset(
+                                name=f"{milestone:03d}", data=np_grids
+                            )
                         # whether to calculate fid
 
                         if self.calculate_fid:
