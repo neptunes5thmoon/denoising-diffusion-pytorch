@@ -789,8 +789,14 @@ class Trainer(object):
                         # whether to calculate fid
 
                         if self.calculate_fid:
-                            fid_score = self.fid_scorer.fid_score()
-                            accelerator.print(f"fid_score: {fid_score}")
+                            if self.channels <= 3:
+                                fid_score = self.fid_scorer.fid_score()
+                                accelerator.print(f"fid_score: {fid_score}")
+                            else:
+                                raise ValueError(
+                                    "FID score cannot be calculated for data with more than 3 channels."
+                                )
+
                         if self.save_best_and_latest_only:
                             if self.best_fid > fid_score:
                                 self.best_fid = fid_score
