@@ -685,7 +685,7 @@ class Trainer(object):
         }
         model_path = str(self.results_folder / f"model-{milestone}.pt")
         torch.save(data, model_path)
-        mlflow.log_artifact(model_path)
+        mlflow.log_artifact(model_path, step=self.step)
 
     def load(self, milestone):
         accelerator = self.accelerator
@@ -732,7 +732,7 @@ class Trainer(object):
                         loss = self.model(data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
-                    mlflow.log_metric("total_loss", total_loss)
+                    mlflow.log_metric("total_loss", total_loss, step=self.step)
                     self.accelerator.backward(loss)
 
                 pbar.set_description(f"loss: {total_loss:.4f}")
@@ -771,7 +771,8 @@ class Trainer(object):
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                             mlflow.log_artifact(
-                                str(self.results_folder / f"sample-{milestone}.png")
+                                str(self.results_folder / f"sample-{milestone}.png"),
+                                step=self.step,
                             )
                         else:
                             grid_lists = [
