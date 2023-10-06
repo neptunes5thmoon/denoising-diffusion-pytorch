@@ -685,7 +685,6 @@ class Trainer(object):
         }
         model_path = str(self.results_folder / f"model-{milestone}.pt")
         torch.save(data, model_path)
-        mlflow.log_artifact(model_path, step=self.step)
 
     def load(self, milestone):
         accelerator = self.accelerator
@@ -716,7 +715,6 @@ class Trainer(object):
             checkpoint_group = zarr.group(
                 store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr"))
             )
-            mlflow.log_artifact(checkpoint_group.store.path)
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -769,10 +767,6 @@ class Trainer(object):
                                 all_images,
                                 str(self.results_folder / f"sample-{milestone}.png"),
                                 nrow=int(math.sqrt(self.num_samples)),
-                            )
-                            mlflow.log_artifact(
-                                str(self.results_folder / f"sample-{milestone}.png"),
-                                step=self.step,
                             )
                         else:
                             grid_lists = [
