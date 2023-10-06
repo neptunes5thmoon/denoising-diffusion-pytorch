@@ -732,9 +732,9 @@ class Trainer(object):
                         loss = self.model(data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
-                    mlflow.log_metric("total_loss", total_loss, step=self.step)
-                    self.accelerator.backward(loss)
 
+                    self.accelerator.backward(loss)
+                mlflow.log_metric("loss", total_loss, step=self.step)
                 pbar.set_description(f"loss: {total_loss:.4f}")
 
                 accelerator.wait_for_everyone()
