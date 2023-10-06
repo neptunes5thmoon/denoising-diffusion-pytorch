@@ -852,7 +852,7 @@ class GaussianDiffusion(nn.Module):
         )
 
     @torch.no_grad()
-    def interpolate(self, x1, x2, classes, t = None, lam = 0.5):
+    def interpolate(self, x1, x2, classes, t=None, lam=0.5):
         b, *_, device = *x1.shape, x1.device
         t = default(t, self.num_timesteps - 1)
 
@@ -863,7 +863,9 @@ class GaussianDiffusion(nn.Module):
 
         img = (1 - lam) * xt1 + lam * xt2
 
-        for i in tqdm(reversed(range(0, t)), desc = 'interpolation sample time step', total = t):
+        for i in tqdm(
+            reversed(range(0, t)), desc="interpolation sample time step", total=t
+        ):
             img, _ = self.p_sample(img, i, classes)
 
         return img
@@ -959,13 +961,10 @@ if __name__ == "__main__":
         cond_scale=6.0,  # condition scaling, anything greater than 1 strengthens the classifier free guidance. reportedly 3-8 is good empirically
     )
 
-    sampled_images.shape # (8, 3, 128, 128)
+    sampled_images.shape  # (8, 3, 128, 128)
 
     # interpolation
 
     interpolate_out = diffusion.interpolate(
-        training_images[:1],
-        training_images[:1],
-        image_classes[:1]
+        training_images[:1], training_images[:1], image_classes[:1]
     )
-
