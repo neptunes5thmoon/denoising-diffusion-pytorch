@@ -5,6 +5,7 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from random import random
 
+import mlflow
 import torch
 import torch.nn.functional as F
 import zarr
@@ -682,8 +683,9 @@ class Trainer(object):
             else None,
             "version": __version__,
         }
-
-        torch.save(data, str(self.results_folder / f"model-{milestone}.pt"))
+        model_path = str(self.results_folder / f"model-{milestone}.pt")
+        torch.save(data, model_path)
+        mlflow.log_artifact(model_path)
 
     def load(self, milestone):
         accelerator = self.accelerator
@@ -714,6 +716,7 @@ class Trainer(object):
             checkpoint_group = zarr.group(
                 store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr"))
             )
+            mlflow.log_artifact(checkpoint_group.store.path)
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -729,7 +732,7 @@ class Trainer(object):
                         loss = self.model(data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
-
+                    mlflow.log_metric("total_loss", total_loss)
                     self.accelerator.backward(loss)
 
                 pbar.set_description(f"loss: {total_loss:.4f}")
@@ -766,6 +769,9 @@ class Trainer(object):
                                 all_images,
                                 str(self.results_folder / f"sample-{milestone}.png"),
                                 nrow=int(math.sqrt(self.num_samples)),
+                            )
+                            mlflow.log_artifact(
+                                str(self.results_folder / f"sample-{milestone}.png")
                             )
                         else:
                             grid_lists = [
