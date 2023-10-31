@@ -1,12 +1,15 @@
+import os
 from functools import partial
 from pathlib import Path
 
+import numpy as np
 import zarr
-
+from fibsem_tools import read, read_xarray
+from PIL import Image
 from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms as T
-from PIL import Image
+
 from denoising_diffusion_pytorch.convenience import exists
 
 
@@ -34,11 +37,7 @@ class SimpleDataset(Dataset):
         self.load_to_ram = load_to_ram
         if self.load_to_ram:
             self.imgs = [Image.open(path) for path in self.paths]
-        maybe_convert_fn = (
-            partial(convert_image_to_fn, convert_image_to)
-            if exists(convert_image_to)
-            else nn.Identity()
-        )
+        maybe_convert_fn = partial(convert_image_to_fn, convert_image_to) if exists(convert_image_to) else nn.Identity()
 
         self.transform = T.Compose(
             [
@@ -111,3 +110,97 @@ class ZarrDataset(Dataset):
             arr = zarr.load(str(self.array_paths[crop_idx]))["label"]
         img = arr[..., z].transpose((1, 2, 0))
         return self.transform(img)
+
+
+class CellMapDataset:
+    def __init__(self, data_path, class_list, scale, annotation_path=None, crop_list=None):
+        self.data_path = data_path
+        self.scale = scale
+        self.class_list = class_list
+        if annotation_path is None:
+            self.annotation_path = data_path
+        else:
+            self.annotation_path = annotation_path
+        self.crops = self._get_crop_list(crop_list)
+
+    def _get_crop_list(self, crop_list=None):
+        if crop_list is None:
+            sample = read(self.annotation_path)
+            crops = ()
+            for ds in sample:
+                ann = read(os.path.join(self.annotation_path, ds))
+                if "annotation" in ann.attrs["cellmap"]:
+                    crop = AnnotationCrop(self.annotation_path, ds, self.scale)
+                    if all(crop.is_fully_annotated(class_name) for class_name in self.class_list):
+                        crops.append(crop)
+            return crops
+        else:
+            return [AnnotationCrop(self.annotation_path, crop_name, self.scale) for crop_name in crop_list]
+            # list(ds.keys())
+
+
+class AnnotationCrop:
+    def __init__(self, data_path, crop_name, scale):
+        self.data_path = data_path
+        self.crop_name = crop_name
+        self.scale = scale
+        self.crop = read(os.path.join(self.data_path, self.crop_name))
+
+    def __repr__(self):
+        return f"AnnotationCrop {self.crop_name} at {self.data_path} with scale {self.scale}"
+
+    def _infer_scale_level(self, cls_name):
+        if cls_name not in self.crop:
+            msg = f"{cls_name} not found in {self}"
+            raise ValueError(msg)
+        arr_path = os.path.join(self.data_path, self.crop_name, cls_name)
+        cls_msarr = read_xarray(arr_path)
+        scales = dict()
+        for name, dtarr in cls_msarr.children.items():
+            arr = dtarr.data
+            voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
+            if voxel_size == self.scale:
+                return name
+            scales[name] = voxel_size
+        msg = f"{arr_path} does not contain array with voxel_size {self.scale}. Available scale levels are: {scales}"
+        raise ValueError(msg)
+
+    def get_classes(self):
+        return self.crop.attrs["cellmap"]["annotation"]["class_names"]
+
+    def get_class_array(self, cls_name):
+        scale_level = self._infer_scale_level(cls_name)
+        return self.crop[os.path.join(cls_name, scale_level)]
+
+    def get_histogram(self, cls_name):
+        return self.get_class_array(cls_name).attrs["cellmap"]["annotation"]["histogram"]
+
+    def get_possibilities(self, cls_name):
+        return set(self.get_class_array(cls_name).attrs["cellmap"]["annotation"]["annotation_type"]["encoding"].keys())
+
+    def get_present_count(self, cls_name):
+        try:
+            class_array = self.get_class_array(cls_name)
+        except ValueError:
+            return 0
+        histogram = self.get_histogram(cls_name)
+        possiblities = self.get_possibilities(cls_name)
+        possiblities.remove("present")
+        not_present_sum = 0
+        for possibility in possiblities:
+            if possibility in histogram:
+                not_present_sum += histogram[possibility]
+        return np.prod(class_array.shape) - not_present_sum
+
+    def has_present(self, cls_name):
+        return self.get_present_count(cls_name) > 0
+
+    def is_fully_annotated(self, cls_name):
+        try:
+            histogram = self.get_histogram(cls_name)
+        except ValueError:
+            return False
+        if "unkown" not in histogram:
+            return True
+        else:
+            return histogram["unkown"] == 0

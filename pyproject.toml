@@ -32,7 +32,9 @@ dependencies = [
     "torch",
     "torchvision",
     "tqdm",
+    "fibsem-tools",
     "zarr",
+    "mlflow"
 ]
 
 [project.urls]
@@ -49,6 +51,8 @@ dependencies = ["coverage[toml]>=6.5","pytest"]
 type = "conda"
 command = "mamba"
 conda-forge = true
+[tool.hatch.envs.default.static]
+dev-mode = true
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
