@@ -117,12 +117,12 @@ class ZarrDataset(Dataset):
         return self.transform(img)
 
 
-class CellMapDatsets3Das2D(ConcatDataset):
+class CellMapDatasets3Das2D(ConcatDataset):
     def __init__(
         self,
         data_paths,
         class_list,
-        patch_size,
+        image_size,
         scale,
         augment_horizontal_flip=True,
         augment_vertical_flip=True,
@@ -149,7 +149,7 @@ class CellMapDatsets3Das2D(ConcatDataset):
                 CellMapDataset3Das2D(
                     dp,
                     class_list,
-                    patch_size,
+                    image_size,
                     scale,
                     augment_horizontal_flip=augment_horizontal_flip,
                     augment_vertical_flip=augment_vertical_flip,
@@ -166,7 +166,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self,
         data_path,
         class_list,
-        patch_size,
+        image_size,
         scale,
         augment_horizontal_flip=True,
         augment_vertical_flip=True,
@@ -178,7 +178,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self.raw_dataset = raw_dataset
         self.scale = scale
         self.class_list = class_list
-        self.patch_size = patch_size
+        self.image_size = image_size
         self._raw_scale = None
         self.augment_horizontal_flip = augment_horizontal_flip
         self.augment_vertical_flip = augment_vertical_flip
@@ -207,13 +207,13 @@ class CellMapDataset3Das2D(ConcatDataset):
                 ann = read(os.path.join(self.annotation_path, ds))
                 if "cellmap" in ann.attrs and "annotation" in ann.attrs["cellmap"]:
                     crop = AnnotationCrop3Das2D(self, self.annotation_path, ds)
-                    if all(crop.sizes[dim] >= self.patch_size for dim in ['x', 'y']) and all(
+                    if all(crop.sizes[dim] >= self.image_size for dim in ['x', 'y']) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
                     ):
                         crops.append(crop)
                     else:
-                        if all(crop.sizes[dim] >= self.patch_size for dim in ['x', 'y']):
-                            msg = f"{crop} has sizes {crop.sizes}, which is too small for patch size {self.patch_size}"
+                        if all(crop.sizes[dim] >= self.image_size for dim in ['x', 'y']):
+                            msg = f"{crop} has sizes {crop.sizes}, which is too small for patch size {self.image_size}"
                         else:
                             not_incl = []
                             for class_name in self.class_list:
@@ -390,10 +390,10 @@ class AnnotationCrop3Das2D(Dataset):
     def __getitem__(self, idx):
         vox_slice = dict()
         vox_slice["z"] = idx
-        x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.patch_size + 1)
-        y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.patch_size + 1)
-        vox_slice["x"] = slice(x_start, x_start + self.parent_data.patch_size)
-        vox_slice["y"] = slice(y_start, y_start + self.parent_data.patch_size)
+        x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.image_size + 1)
+        y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.image_size + 1)
+        vox_slice["x"] = slice(x_start, x_start + self.parent_data.image_size)
+        vox_slice["y"] = slice(y_start, y_start + self.parent_data.image_size)
         arrs = []
         for cls_name in self.parent_data.class_list:
             cls_arr = self.get_class_xarray(cls_name).isel(vox_slice)
