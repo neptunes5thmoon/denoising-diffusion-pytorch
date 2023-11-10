@@ -2,7 +2,7 @@ from denoising_diffusion_pytorch.denoising_diffusion import (
     GaussianDiffusion,
     Trainer,
 )
-from denoising_diffusion_pytorch.datasets import SimpleDataset, ZarrDataset
+from denoising_diffusion_pytorch.datasets import SimpleDataset, ZarrDataset, CellMapDatasets3Das2D, CellMapDataset3Das2D
 from denoising_diffusion_pytorch.architecture import Unet
 from denoising_diffusion_pytorch.learned_gaussian_diffusion import (
     LearnedGaussianDiffusion,
