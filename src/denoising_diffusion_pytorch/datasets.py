@@ -117,6 +117,50 @@ class ZarrDataset(Dataset):
         return self.transform(img)
 
 
+class CellMapDatsets3Das2D(ConcatDataset):
+    def __init__(
+        self,
+        data_paths,
+        class_list,
+        patch_size,
+        scale,
+        augment_horizontal_flip=True,
+        augment_vertical_flip=True,
+        annotation_paths=None,
+        crop_lists=None,
+        raw_datasets=None,
+    ):
+        cellmap_datasets = []
+        if annotation_paths is None:
+            annotation_paths = [
+                None,
+            ] * len(data_paths)
+        if crop_lists is None:
+            crop_lists = [
+                None,
+            ] * len(data_paths)
+        if raw_datasets is None:
+            raw_datasets = [
+                "volumes/raw",
+            ] * len(data_paths)
+        assert len(data_paths) == len(annotation_paths) == len(crop_lists) == len(raw_datasets)
+        for dp, ap, cl, rd in zip(data_paths, annotation_paths, crop_lists, raw_datasets):
+            cellmap_datasets.append(
+                CellMapDataset3Das2D(
+                    dp,
+                    class_list,
+                    patch_size,
+                    scale,
+                    augment_horizontal_flip=augment_horizontal_flip,
+                    augment_vertical_flip=augment_vertical_flip,
+                    annotation_path=ap,
+                    crop_list=cl,
+                    raw_dataset=rd,
+                )
+            )
+        super().__init__(cellmap_datasets)
+
+
 class CellMapDataset3Das2D(ConcatDataset):
     def __init__(
         self,
