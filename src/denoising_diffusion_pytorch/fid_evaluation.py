@@ -67,9 +67,7 @@ class FIDEvaluation:
         except OSError:
             num_batches = int(math.ceil(self.n_samples / self.batch_size))
             stacked_real_features = []
-            self.print_fn(
-                f"Stacking Inception features for {self.n_samples} samples from the real dataset."
-            )
+            self.print_fn(f"Stacking Inception features for {self.n_samples} samples from the real dataset.")
             for _ in tqdm(range(num_batches)):
                 try:
                     real_samples = next(self.dl)
@@ -78,9 +76,7 @@ class FIDEvaluation:
                 real_samples = real_samples.to(self.device)
                 real_features = self.calculate_inception_features(real_samples)
                 stacked_real_features.append(real_features)
-            stacked_real_features = (
-                torch.cat(stacked_real_features, dim=0).cpu().numpy()
-            )
+            stacked_real_features = torch.cat(stacked_real_features, dim=0).cpu().numpy()
             m2 = np.mean(stacked_real_features, axis=0)
             s2 = np.cov(stacked_real_features, rowvar=False)
             np.savez_compressed(path, m2=m2, s2=s2)
@@ -95,9 +91,7 @@ class FIDEvaluation:
         self.sampler.eval()
         batches = num_to_groups(self.n_samples, self.batch_size)
         stacked_fake_features = []
-        self.print_fn(
-            f"Stacking Inception features for {self.n_samples} generated samples."
-        )
+        self.print_fn(f"Stacking Inception features for {self.n_samples} generated samples.")
         for batch in tqdm(batches):
             fake_samples = self.sampler.sample(batch_size=batch)
             fake_features = self.calculate_inception_features(fake_samples)

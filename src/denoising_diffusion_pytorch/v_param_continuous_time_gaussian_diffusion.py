@@ -105,13 +105,9 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
         c = -expm1(log_snr - log_snr_next)
 
         squared_alpha, squared_alpha_next = log_snr.sigmoid(), log_snr_next.sigmoid()
-        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (
-            -log_snr_next
-        ).sigmoid()
+        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (-log_snr_next).sigmoid()
 
-        alpha, sigma, alpha_next = map(
-            sqrt, (squared_alpha, squared_sigma, squared_alpha_next)
-        )
+        alpha, sigma, alpha_next = map(sqrt, (squared_alpha, squared_sigma, squared_alpha_next))
 
         batch_log_snr = repeat(log_snr, " -> b", b=x.shape[0])
 
@@ -135,9 +131,7 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
     def p_sample(self, x, time, time_next):
         batch, *_, device = *x.shape, x.device
 
-        model_mean, model_variance = self.p_mean_variance(
-            x=x, time=time, time_next=time_next
-        )
+        model_mean, model_variance = self.p_mean_variance(x=x, time=time, time_next=time_next)
 
         if time_next == 0:
             return model_mean
@@ -167,9 +161,7 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size=16):
-        return self.p_sample_loop(
-            (batch_size, self.channels, self.image_size, self.image_size)
-        )
+        return self.p_sample_loop((batch_size, self.channels, self.image_size, self.image_size))
 
     # training related functions - noise prediction
 
@@ -191,9 +183,7 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
     def p_losses(self, x_start, times, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 
-        x, log_snr, alpha, sigma = self.q_sample(
-            x_start=x_start, times=times, noise=noise
-        )
+        x, log_snr, alpha, sigma = self.q_sample(x_start=x_start, times=times, noise=noise)
 
         # described in section 4 as the prediction objective, with derivation in Appendix D
         v = alpha * noise - sigma * x_start
@@ -215,9 +205,7 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
             img.device,
             self.image_size,
         )
-        assert (
-            h == img_size and w == img_size
-        ), f"height and width of image must be {img_size}"
+        assert h == img_size and w == img_size, f"height and width of image must be {img_size}"
 
         times = self.random_times(b)
         img = normalize_to_neg_one_to_one(img)

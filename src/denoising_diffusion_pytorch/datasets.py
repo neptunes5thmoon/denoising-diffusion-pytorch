@@ -128,7 +128,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         augment_vertical_flip=True,
         annotation_path=None,
         crop_list=None,
-        raw_dataset = "volumes/raw"
+        raw_dataset="volumes/raw",
     ):
         self.data_path = data_path
         self.raw_dataset = raw_dataset
@@ -145,7 +145,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self.crops = self._get_crop_list(crop_list)
         super().__init__(self.crops)
         self.transform = T.Compose(
-            [   
+            [
                 T.ToTensor(),
                 T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
@@ -163,10 +163,12 @@ class CellMapDataset3Das2D(ConcatDataset):
                 ann = read(os.path.join(self.annotation_path, ds))
                 if "cellmap" in ann.attrs and "annotation" in ann.attrs["cellmap"]:
                     crop = AnnotationCrop3Das2D(self, self.annotation_path, ds)
-                    if all(crop.sizes[dim]>= self.patch_size for dim in ['x','y']) and  all(crop.is_fully_annotated(class_name) for class_name in self.class_list):
+                    if all(crop.sizes[dim] >= self.patch_size for dim in ['x', 'y']) and all(
+                        crop.is_fully_annotated(class_name) for class_name in self.class_list
+                    ):
                         crops.append(crop)
                     else:
-                        if all(crop.sizes[dim]>= self.patch_size for dim in ['x','y']):
+                        if all(crop.sizes[dim] >= self.patch_size for dim in ['x', 'y']):
                             msg = f"{crop} has sizes {crop.sizes}, which is too small for patch size {self.patch_size}"
                         else:
                             not_incl = []
@@ -181,9 +183,10 @@ class CellMapDataset3Das2D(ConcatDataset):
             msg = f"List of crops for {self.data_path} with annotations for {self.class_list} at {self.annotation_path} is empty."
             raise ValueError(msg)
         return crops
+
     def get_raw_xarray(self):
         return read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
-    
+
     @property
     def raw_scale(self):
         if self._raw_scale is None:
@@ -208,9 +211,10 @@ class CellMapDataset3Das2D(ConcatDataset):
                     raise ValueError(msg)
                 self._raw_scale = ''
         return self._raw_scale
+
     def __getitem__(self, idx):
         return self.transform(super().__getitem__(idx))
-        
+
     #     for name, dtarr in cls_msarr.children.items():
     #         arr = dtarr.data
     #         voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
@@ -219,7 +223,6 @@ class CellMapDataset3Das2D(ConcatDataset):
     #         scale_to_voxelsize[cls_name] = voxel_size
     #     msg = f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. Available scale levels are: {scale_to_voxelsize}"
     #     raise ValueError(msg)
-        
 
 
 class AnnotationCrop3Das2D(Dataset):
@@ -251,17 +254,19 @@ class AnnotationCrop3Das2D(Dataset):
         if self._sizes is None:
             self._sizes = self.get_xarray_attr('sizes')
         return self._sizes
-    
+
     @property
     def size(self):
         if self._size is None:
             self._size = self.get_xarray_attr('size')
         return self._size
+
     @property
     def coords(self):
         if self._coords is None:
             self._coords = self.get_xarray_attr('coords')
-        return self._coords  
+        return self._coords
+
     def get_xarray_attr(self, attr):
         ref_attr = None
         for class_name in self.class_list:
@@ -272,8 +277,7 @@ class AnnotationCrop3Das2D(Dataset):
                 msg = f"Crop {self} has arrays with different values for {attr} for requested scale {self.parent_data.scale}. Found (at least) {curr_attr}, {ref_attr}."
                 raise ValueError(msg)
         return ref_attr
-                
-            
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.crop_name} at {self.annotation_path} from {self.parent_data.__class__.__name__} at {self.parent_data.data_path}"
 
@@ -342,34 +346,76 @@ class AnnotationCrop3Das2D(Dataset):
     def __getitem__(self, idx):
         vox_slice = dict()
         vox_slice["z"] = idx
-        x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.patch_size +1) 
-        y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.patch_size +1) 
-        vox_slice["x"] = slice(x_start, x_start+self.parent_data.patch_size)
-        vox_slice["y"] = slice(y_start, y_start+self.parent_data.patch_size)
+        x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.patch_size + 1)
+        y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.patch_size + 1)
+        vox_slice["x"] = slice(x_start, x_start + self.parent_data.patch_size)
+        vox_slice["y"] = slice(y_start, y_start + self.parent_data.patch_size)
         arrs = []
         for cls_name in self.parent_data.class_list:
             cls_arr = self.get_class_xarray(cls_name).isel(vox_slice)
             arrs.append(cls_arr.copy())
-        spatial_slice = {dim:slice(int(cls_arr.coords[dim][0])-self.parent_data.scale[dim]/2, int(cls_arr.coords[dim][-1])+self.parent_data.scale[dim]/2) for dim in "xy"}
-        spatial_slice["z"] = slice(int(cls_arr.coords["z"])-self.parent_data.scale["z"]/2, int(cls_arr.coords["z"])+self.parent_data.scale["z"]/2)
-        raw_arr = self.parent_data.get_raw_xarray().sel(spatial_slice).squeeze().copy()/255.
+        spatial_slice = {
+            dim: slice(
+                int(cls_arr.coords[dim][0]) - self.parent_data.scale[dim] / 2,
+                int(cls_arr.coords[dim][-1]) + self.parent_data.scale[dim] / 2,
+            )
+            for dim in "xy"
+        }
+        spatial_slice["z"] = slice(
+            int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
+            int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
+        )
+        raw_arr = self.parent_data.get_raw_xarray().sel(spatial_slice).squeeze().copy() / 255.0
         arrs.append(raw_arr)
         patch = np.stack(tuple(arr.values.astype(np.float32) for arr in arrs), axis=-1)
         return patch
-         
+
 
 if __name__ == "__main__":
     data_path = "/nrs/cellmap/data/jrc_hela-2/jrc_hela-2.n5"
     annotation_path = "/nrs/cellmap/data/jrc_hela-2/staging/groundtruth.zarr"
-    ds = CellMapDataset3Das2D(data_path, 
-                              ["ecs", "pm", "mito_mem", "mito_lum", "mito_ribo", "golgi_mem", "golgi_lum", "ves_mem", 
-                               "ves_lum", "endo_mem", "endo_lum", "lyso_mem", "lyso_lum", "ld_mem", "ld_lum", "er_mem", 
-                               "er_lum", "eres_mem", "eres_lum", "ne_mem", "ne_lum", "np_out", "np_in", "hchrom", "nhchrom", 
-                               "echrom", "nechrom", "nucpl", "nucleo", "mt_out", "mt_in"], 
-                               64, {"x": 4, "y":4, "z":4}, annotation_path=annotation_path, crop_list=['crop1', 'crop113'])
+    ds = CellMapDataset3Das2D(
+        data_path,
+        [
+            "ecs",
+            "pm",
+            "mito_mem",
+            "mito_lum",
+            "mito_ribo",
+            "golgi_mem",
+            "golgi_lum",
+            "ves_mem",
+            "ves_lum",
+            "endo_mem",
+            "endo_lum",
+            "lyso_mem",
+            "lyso_lum",
+            "ld_mem",
+            "ld_lum",
+            "er_mem",
+            "er_lum",
+            "eres_mem",
+            "eres_lum",
+            "ne_mem",
+            "ne_lum",
+            "np_out",
+            "np_in",
+            "hchrom",
+            "nhchrom",
+            "echrom",
+            "nechrom",
+            "nucpl",
+            "nucleo",
+            "mt_out",
+            "mt_in",
+        ],
+        64,
+        {"x": 4, "y": 4, "z": 4},
+        annotation_path=annotation_path,
+        crop_list=['crop1', 'crop113'],
+    )
     print(ds)
     print(len(ds))
     print(type(ds[10]))
     print(ds[10].shape)
     print(ds[10])
-    

@@ -110,9 +110,7 @@ class ElucidatedDiffusion(nn.Module):
     # preconditioned network output
     # equation (7) in the paper
 
-    def preconditioned_network_forward(
-        self, noised_images, sigma, self_cond=None, clamp=False
-    ):
+    def preconditioned_network_forward(self, noised_images, sigma, self_cond=None, clamp=False):
         batch, device = noised_images.shape[0], noised_images.device
 
         if isinstance(sigma, float):
@@ -120,14 +118,9 @@ class ElucidatedDiffusion(nn.Module):
 
         padded_sigma = rearrange(sigma, "b -> b 1 1 1")
 
-        net_out = self.net(
-            self.c_in(padded_sigma) * noised_images, self.c_noise(sigma), self_cond
-        )
+        net_out = self.net(self.c_in(padded_sigma) * noised_images, self.c_noise(sigma), self_cond)
 
-        out = (
-            self.c_skip(padded_sigma) * noised_images
-            + self.c_out(padded_sigma) * net_out
-        )
+        out = self.c_skip(padded_sigma) * noised_images + self.c_out(padded_sigma) * net_out
 
         if clamp:
             out = out.clamp(-1.0, 1.0)
@@ -147,8 +140,7 @@ class ElucidatedDiffusion(nn.Module):
 
         steps = torch.arange(num_sample_steps, device=self.device, dtype=torch.float32)
         sigmas = (
-            self.sigma_max**inv_rho
-            + steps / (N - 1) * (self.sigma_min**inv_rho - self.sigma_max**inv_rho)
+            self.sigma_max**inv_rho + steps / (N - 1) * (self.sigma_min**inv_rho - self.sigma_max**inv_rho)
         ) ** self.rho
 
         sigmas = F.pad(sigmas, (0, 1), value=0.0)  # last step is sigma value of 0.
@@ -184,25 +176,17 @@ class ElucidatedDiffusion(nn.Module):
 
         # gradually denoise
 
-        for sigma, sigma_next, gamma in tqdm(
-            sigmas_and_gammas, desc="sampling time step"
-        ):
-            sigma, sigma_next, gamma = map(
-                lambda t: t.item(), (sigma, sigma_next, gamma)
-            )
+        for sigma, sigma_next, gamma in tqdm(sigmas_and_gammas, desc="sampling time step"):
+            sigma, sigma_next, gamma = map(lambda t: t.item(), (sigma, sigma_next, gamma))
 
-            eps = self.S_noise * torch.randn(
-                shape, device=self.device
-            )  # stochastic sampling
+            eps = self.S_noise * torch.randn(shape, device=self.device)  # stochastic sampling
 
             sigma_hat = sigma + gamma * sigma
             images_hat = images + sqrt(sigma_hat**2 - sigma**2) * eps
 
             self_cond = x_start if self.self_condition else None
 
-            model_output = self.preconditioned_network_forward(
-                images_hat, sigma_hat, self_cond, clamp=clamp
-            )
+            model_output = self.preconditioned_network_forward(images_hat, sigma_hat, self_cond, clamp=clamp)
             denoised_over_sigma = (images_hat - model_output) / sigma_hat
 
             images_next = images_hat + (sigma_next - sigma_hat) * denoised_over_sigma
@@ -212,12 +196,8 @@ class ElucidatedDiffusion(nn.Module):
             if sigma_next != 0:
                 self_cond = model_output if self.self_condition else None
 
-                model_output_next = self.preconditioned_network_forward(
-                    images_next, sigma_next, self_cond, clamp=clamp
-                )
-                denoised_prime_over_sigma = (
-                    images_next - model_output_next
-                ) / sigma_next
+                model_output_next = self.preconditioned_network_forward(images_next, sigma_next, self_cond, clamp=clamp)
+                denoised_prime_over_sigma = (images_next - model_output_next) / sigma_next
                 images_next = images_hat + 0.5 * (sigma_next - sigma_hat) * (
                     denoised_over_sigma + denoised_prime_over_sigma
                 )
@@ -235,9 +215,7 @@ class ElucidatedDiffusion(nn.Module):
         https://arxiv.org/abs/2211.01095
         """
 
-        device, num_sample_steps = self.device, default(
-            num_sample_steps, self.num_sample_steps
-        )
+        device, num_sample_steps = self.device, default(num_sample_steps, self.num_sample_steps)
 
         sigmas = self.sample_schedule(num_sample_steps)
 
@@ -261,9 +239,7 @@ class ElucidatedDiffusion(nn.Module):
                 gamma = -1 / (2 * r)
                 denoised_d = (1 - gamma) * denoised + gamma * old_denoised
 
-            images = (sigma_fn(t_next) / sigma_fn(t)) * images - (
-                -h
-            ).expm1() * denoised_d
+            images = (sigma_fn(t_next) / sigma_fn(t)) * images - (-h).expm1() * denoised_d
             old_denoised = denoised
 
         images = images.clamp(-1.0, 1.0)
@@ -275,9 +251,7 @@ class ElucidatedDiffusion(nn.Module):
         return (sigma**2 + self.sigma_data**2) * (sigma * self.sigma_data) ** -2
 
     def noise_distribution(self, batch_size):
-        return (
-            self.P_mean + self.P_std * torch.randn((batch_size,), device=self.device)
-        ).exp()
+        return (self.P_mean + self.P_std * torch.randn((batch_size,), device=self.device)).exp()
 
     def forward(self, images):
         batch_size, c, h, w, device, image_size, channels = (
@@ -287,9 +261,7 @@ class ElucidatedDiffusion(nn.Module):
             self.channels,
         )
 
-        assert (
-            h == image_size and w == image_size
-        ), f"height and width of image must be {image_size}"
+        assert h == image_size and w == image_size, f"height and width of image must be {image_size}"
         assert c == channels, "mismatch of image channels"
 
         images = normalize_to_neg_one_to_one(images)

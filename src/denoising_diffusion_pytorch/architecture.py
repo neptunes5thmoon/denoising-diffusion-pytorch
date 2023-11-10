@@ -136,11 +136,7 @@ class Block(nn.Module):
 class ResnetBlock(nn.Module):
     def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
         super().__init__()
-        self.mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2))
-            if exists(time_emb_dim)
-            else None
-        )
+        self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2)) if exists(time_emb_dim) else None
 
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
@@ -175,9 +171,7 @@ class LinearAttention(nn.Module):
         b, c, h, w = x.shape
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
-        )
+        q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv)
 
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
@@ -207,9 +201,7 @@ class Attention(nn.Module):
         b, c, h, w = x.shape
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h (x y) c", h=self.heads), qkv
-        )
+        q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h (x y) c", h=self.heads), qkv)
 
         out = self.attend(q, k, v)
         out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
@@ -259,14 +251,10 @@ class Unet(nn.Module):
 
         time_dim = dim * 4
 
-        self.random_or_learned_sinusoidal_cond = (
-            learned_sinusoidal_cond or random_fourier_features
-        )
+        self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
 
         if self.random_or_learned_sinusoidal_cond:
-            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(
-                learned_sinusoidal_dim, random_fourier_features
-            )
+            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
             fourier_dim = learned_sinusoidal_dim + 1
         else:
             sinu_pos_emb = SinusoidalPosEmb(dim, theta=sinusoidal_pos_emb_theta)
@@ -311,21 +299,15 @@ class Unet(nn.Module):
                     [
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                        attn_klass(
-                            dim_in, dim_head=layer_attn_dim_head, heads=layer_attn_heads
-                        ),
-                        Downsample(dim_in, dim_out)
-                        if not is_last
-                        else nn.Conv2d(dim_in, dim_out, 3, padding=1),
+                        attn_klass(dim_in, dim_head=layer_attn_dim_head, heads=layer_attn_heads),
+                        Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding=1),
                     ]
                 )
             )
 
         mid_dim = dims[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-        self.mid_attn = FullAttention(
-            mid_dim, heads=attn_heads[-1], dim_head=attn_dim_head[-1]
-        )
+        self.mid_attn = FullAttention(mid_dim, heads=attn_heads[-1], dim_head=attn_dim_head[-1])
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         for ind, (
@@ -333,9 +315,7 @@ class Unet(nn.Module):
             layer_full_attn,
             layer_attn_heads,
             layer_attn_dim_head,
-        ) in enumerate(
-            zip(*map(reversed, (in_out, full_attn, attn_heads, attn_dim_head)))
-        ):
+        ) in enumerate(zip(*map(reversed, (in_out, full_attn, attn_heads, attn_dim_head)))):
             is_last = ind == (len(in_out) - 1)
 
             attn_klass = FullAttention if layer_full_attn else LinearAttention
@@ -350,9 +330,7 @@ class Unet(nn.Module):
                             dim_head=layer_attn_dim_head,
                             heads=layer_attn_heads,
                         ),
-                        Upsample(dim_out, dim_in)
-                        if not is_last
-                        else nn.Conv2d(dim_out, dim_in, 3, padding=1),
+                        Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(dim_out, dim_in, 3, padding=1),
                     ]
                 )
             )

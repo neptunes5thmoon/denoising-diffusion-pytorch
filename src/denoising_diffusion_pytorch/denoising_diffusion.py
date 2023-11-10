@@ -104,9 +104,7 @@ def sigmoid_beta_schedule(timesteps, start=-3, end=3, tau=1, clamp_min=1e-5):
     t = torch.linspace(0, timesteps, steps, dtype=torch.float64) / timesteps
     v_start = torch.tensor(start / tau).sigmoid()
     v_end = torch.tensor(end / tau).sigmoid()
-    alphas_cumprod = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (
-        v_end - v_start
-    )
+    alphas_cumprod = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (v_end - v_start)
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0, 0.999)
@@ -178,9 +176,7 @@ class GaussianDiffusion(nn.Module):
 
         # helper function to register buffer from float64 to float32
 
-        register_buffer = lambda name, val: self.register_buffer(
-            name, val.to(torch.float32)
-        )
+        register_buffer = lambda name, val: self.register_buffer(name, val.to(torch.float32))
 
         register_buffer("betas", betas)
         register_buffer("alphas_cumprod", alphas_cumprod)
@@ -189,20 +185,14 @@ class GaussianDiffusion(nn.Module):
         # calculations for diffusion q(x_t | x_{t-1}) and others
 
         register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
-        register_buffer(
-            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod)
-        )
+        register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod))
         register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
         register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
-        register_buffer(
-            "sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1)
-        )
+        register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
-        posterior_variance = (
-            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        )
+        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
 
@@ -261,9 +251,9 @@ class GaussianDiffusion(nn.Module):
         )
 
     def predict_noise_from_start(self, x_t, t, x0):
-        return (
-            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
-        ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / extract(
+            self.sqrt_recipm1_alphas_cumprod, t, x_t.shape
+        )
 
     def predict_v(self, x_start, t, noise):
         return (
@@ -283,18 +273,12 @@ class GaussianDiffusion(nn.Module):
             + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
-        posterior_log_variance_clipped = extract(
-            self.posterior_log_variance_clipped, t, x_t.shape
-        )
+        posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def model_predictions(
-        self, x, t, x_self_cond=None, clip_x_start=False, rederive_pred_noise=False
-    ):
+    def model_predictions(self, x, t, x_self_cond=None, clip_x_start=False, rederive_pred_noise=False):
         model_output = self.model(x, t, x_self_cond)
-        maybe_clip = (
-            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        )
+        maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
 
         if self.objective == "pred_noise":
             pred_noise = model_output
@@ -324,9 +308,7 @@ class GaussianDiffusion(nn.Module):
         if clip_denoised:
             x_start.clamp_(-1.0, 1.0)
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_start, x_t=x, t=t
-        )
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
@@ -378,9 +360,7 @@ class GaussianDiffusion(nn.Module):
             -1, total_timesteps - 1, steps=sampling_timesteps + 1
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
-        time_pairs = list(
-            zip(times[:-1], times[1:])
-        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+        time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn(shape, device=device)
         imgs = [img]
@@ -402,9 +382,7 @@ class GaussianDiffusion(nn.Module):
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
 
-            sigma = (
-                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
-            )
+            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma**2).sqrt()
 
             noise = torch.randn_like(img)
@@ -421,9 +399,7 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def sample(self, batch_size=16, return_all_timesteps=False):
         image_size, channels = self.image_size, self.channels
-        sample_fn = (
-            self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        )
+        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn(
             (batch_size, channels, image_size, image_size),
             return_all_timesteps=return_all_timesteps,
@@ -443,9 +419,7 @@ class GaussianDiffusion(nn.Module):
 
         x_start = None
 
-        for i in tqdm(
-            reversed(range(0, t)), desc="interpolation sample time step", total=t
-        ):
+        for i in tqdm(reversed(range(0, t)), desc="interpolation sample time step", total=t):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(img, i, self_cond)
 
@@ -467,9 +441,7 @@ class GaussianDiffusion(nn.Module):
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
-        offset_noise_strength = default(
-            offset_noise_strength, self.offset_noise_strength
-        )
+        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
 
         if offset_noise_strength > 0.0:
             offset_noise = torch.randn(x_start.shape[:2], device=self.device)
@@ -522,9 +494,7 @@ class GaussianDiffusion(nn.Module):
             img.device,
             self.image_size,
         )
-        assert (
-            h == img_size and w == img_size
-        ), f"height and width of image must be {img_size}"
+        assert h == img_size and w == img_size, f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         img = self.normalize(img)
@@ -576,9 +546,7 @@ class Trainer(object):
 
         # sampling and training hyperparameters
 
-        assert has_int_squareroot(
-            num_samples
-        ), "number of samples must have an integer square root"
+        assert has_int_squareroot(num_samples), "number of samples must have an integer square root"
         self.num_samples = num_samples
         self.save_and_sample_every = save_and_sample_every
 
@@ -586,7 +554,9 @@ class Trainer(object):
         self.gradient_accumulate_every = gradient_accumulate_every
         assert (
             train_batch_size * gradient_accumulate_every
-        ) >= 16, f"your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above"
+        ) >= 16, (
+            f"your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above"
+        )
 
         self.train_num_steps = train_num_steps
         self.image_size = diffusion_model.image_size
@@ -619,9 +589,7 @@ class Trainer(object):
         # for logging results in a folder periodically
 
         if self.accelerator.is_main_process:
-            self.ema = EMA(
-                diffusion_model, beta=ema_decay, update_every=ema_update_every
-            )
+            self.ema = EMA(diffusion_model, beta=ema_decay, update_every=ema_update_every)
             self.ema.to(self.device)
 
         self.results_folder = Path(results_folder)
@@ -678,9 +646,7 @@ class Trainer(object):
             "model": self.accelerator.get_state_dict(self.model),
             "opt": self.opt.state_dict(),
             "ema": self.ema.state_dict(),
-            "scaler": self.accelerator.scaler.state_dict()
-            if exists(self.accelerator.scaler)
-            else None,
+            "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
         model_path = str(self.results_folder / f"model-{milestone}.pt")
@@ -690,9 +656,7 @@ class Trainer(object):
         accelerator = self.accelerator
         device = accelerator.device
 
-        data = torch.load(
-            str(self.results_folder / f"model-{milestone}.pt"), map_location=device
-        )
+        data = torch.load(str(self.results_folder / f"model-{milestone}.pt"), map_location=device)
 
         model = self.accelerator.unwrap_model(self.model)
         model.load_state_dict(data["model"])
@@ -712,9 +676,7 @@ class Trainer(object):
         accelerator = self.accelerator
         device = accelerator.device
         if self.channels > 3:
-            checkpoint_group = zarr.group(
-                store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr"))
-            )
+            checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr")))
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -747,9 +709,7 @@ class Trainer(object):
                 if accelerator.is_main_process:
                     self.ema.update()
 
-                    if self.step != 0 and divisible_by(
-                        self.step, self.save_and_sample_every
-                    ):
+                    if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
                         milestone = self.step // self.save_and_sample_every
                         with torch.inference_mode():
@@ -777,16 +737,8 @@ class Trainer(object):
                                 for ch in range(all_images.shape[1])
                             ]
                             grids = torch.stack(grid_lists, dim=0)
-                            np_grids = (
-                                grids.mul(255)
-                                .add_(0.5)
-                                .clamp_(0, 255)
-                                .to("cpu", torch.uint8)
-                                .numpy()
-                            )
-                            checkpoint_group.create_dataset(
-                                name=f"{milestone:03d}", data=np_grids
-                            )
+                            np_grids = grids.mul(255).add_(0.5).clamp_(0, 255).to("cpu", torch.uint8).numpy()
+                            checkpoint_group.create_dataset(name=f"{milestone:03d}", data=np_grids)
                         # whether to calculate fid
 
                         if self.calculate_fid:
@@ -794,9 +746,7 @@ class Trainer(object):
                                 fid_score = self.fid_scorer.fid_score()
                                 accelerator.print(f"fid_score: {fid_score}")
                             else:
-                                raise ValueError(
-                                    "FID score cannot be calculated for data with more than 3 channels."
-                                )
+                                raise ValueError("FID score cannot be calculated for data with more than 3 channels.")
 
                         if self.save_best_and_latest_only:
                             if self.best_fid > fid_score:

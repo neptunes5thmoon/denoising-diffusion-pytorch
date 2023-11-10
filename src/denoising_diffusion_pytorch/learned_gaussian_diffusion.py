@@ -15,9 +15,7 @@ from denoising_diffusion_pytorch.denoising_diffusion import (
 
 NAT = 1.0 / ln(2)
 
-ModelPrediction = namedtuple(
-    "ModelPrediction", ["pred_noise", "pred_x_start", "pred_variance"]
-)
+ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start", "pred_variance"])
 
 # helper functions
 
@@ -48,11 +46,7 @@ def normal_kl(mean1, logvar1, mean2, logvar2):
     KL divergence between normal distributions parameterized by mean and log-variance.
     """
     return 0.5 * (
-        -1.0
-        + logvar2
-        - logvar1
-        + torch.exp(logvar1 - logvar2)
-        + ((mean1 - mean2) ** 2) * torch.exp(-logvar2)
+        -1.0 + logvar2 - logvar1 + torch.exp(logvar1 - logvar2) + ((mean1 - mean2) ** 2) * torch.exp(-logvar2)
     )
 
 
@@ -90,13 +84,7 @@ def discretized_gaussian_log_likelihood(x, *, means, log_scales, thres=0.999):
 
 
 class LearnedGaussianDiffusion(GaussianDiffusion):
-    def __init__(
-        self,
-        model,
-        vb_loss_weight=0.001,  # lambda was 0.001 in the paper
-        *args,
-        **kwargs
-    ):
+    def __init__(self, model, vb_loss_weight=0.001, *args, **kwargs):  # lambda was 0.001 in the paper
         super().__init__(model, *args, **kwargs)
         assert model.out_dim == (
             model.channels * 2
@@ -109,9 +97,7 @@ class LearnedGaussianDiffusion(GaussianDiffusion):
         model_output = self.model(x, t)
         model_output, pred_variance = model_output.chunk(2, dim=1)
 
-        maybe_clip = (
-            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        )
+        maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
 
         if self.objective == "pred_noise":
             pred_noise = model_output
@@ -155,9 +141,7 @@ class LearnedGaussianDiffusion(GaussianDiffusion):
 
         # calculating kl loss for learned variance (interpolation)
 
-        true_mean, _, true_log_variance_clipped = self.q_posterior(
-            x_start=x_start, x_t=x_t, t=t
-        )
+        true_mean, _, true_log_variance_clipped = self.q_posterior(x_start=x_start, x_t=x_t, t=t)
         model_mean, _, model_log_variance, _ = self.p_mean_variance(
             x=x_t, t=t, clip_denoised=clip_denoised, model_output=model_output
         )

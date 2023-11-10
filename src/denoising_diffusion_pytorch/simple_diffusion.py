@@ -92,12 +92,8 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
         normalize_dim = self.normalize_dim
-        scale = (
-            append_dims(self.g, x.ndim - self.normalize_dim - 1) if self.scale else 1
-        )
-        return (
-            F.normalize(x, dim=normalize_dim) * scale * (x.shape[normalize_dim] ** 0.5)
-        )
+        scale = append_dims(self.g, x.ndim - self.normalize_dim - 1) if self.scale else 1
+        return F.normalize(x, dim=normalize_dim) * scale * (x.shape[normalize_dim] ** 0.5)
 
 
 # sinusoidal positional embeds
@@ -143,11 +139,7 @@ class Block(nn.Module):
 class ResnetBlock(nn.Module):
     def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
         super().__init__()
-        self.mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2))
-            if exists(time_emb_dim)
-            else None
-        )
+        self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2)) if exists(time_emb_dim) else None
 
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
@@ -177,9 +169,7 @@ class LinearAttention(nn.Module):
         self.norm = RMSNorm(dim, normalize_dim=1)
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
 
-        self.to_out = nn.Sequential(
-            nn.Conv2d(hidden_dim, dim, 1), RMSNorm(dim, normalize_dim=1)
-        )
+        self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1), RMSNorm(dim, normalize_dim=1))
 
     def forward(self, x):
         residual = x
@@ -189,9 +179,7 @@ class LinearAttention(nn.Module):
         x = self.norm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
-        )
+        q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv)
 
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
@@ -251,9 +239,7 @@ class FeedForward(nn.Module):
         self.norm = RMSNorm(dim, scale=False)
         dim_hidden = dim * mult
 
-        self.to_scale_shift = nn.Sequential(
-            nn.SiLU(), nn.Linear(cond_dim, dim_hidden * 2), Rearrange("b d -> b 1 d")
-        )
+        self.to_scale_shift = nn.Sequential(nn.SiLU(), nn.Linear(cond_dim, dim_hidden * 2), Rearrange("b d -> b 1 d"))
 
         to_scale_shift_linear = self.to_scale_shift[-2]
         nn.init.zeros_(to_scale_shift_linear.weight)
@@ -261,9 +247,7 @@ class FeedForward(nn.Module):
 
         self.proj_in = nn.Sequential(nn.Linear(dim, dim_hidden, bias=False), nn.SiLU())
 
-        self.proj_out = nn.Sequential(
-            nn.Dropout(dropout), nn.Linear(dim_hidden, dim, bias=False)
-        )
+        self.proj_out = nn.Sequential(nn.Dropout(dropout), nn.Linear(dim_hidden, dim, bias=False))
 
     def forward(self, x, t):
         x = self.norm(x)
@@ -296,9 +280,7 @@ class Transformer(nn.Module):
             self.layers.append(
                 nn.ModuleList(
                     [
-                        Attention(
-                            dim=dim, dim_head=dim_head, heads=heads, dropout=dropout
-                        ),
+                        Attention(dim=dim, dim_head=dim_head, heads=heads, dropout=dropout),
                         FeedForward(
                             dim=dim,
                             mult=ff_mult,
@@ -348,10 +330,7 @@ class UViT(nn.Module):
         if exists(init_img_transform) and exists(final_img_itransform):
             init_shape = torch.Size(1, 1, 32, 32)
             mock_tensor = torch.randn(init_shape)
-            assert (
-                final_img_itransform(init_img_transform(mock_tensor)).shape
-                == init_shape
-            )
+            assert final_img_itransform(init_img_transform(mock_tensor)).shape == init_shape
 
         self.init_img_transform = default(init_img_transform, identity)
         self.final_img_itransform = default(final_img_itransform, identity)
@@ -370,9 +349,7 @@ class UViT(nn.Module):
 
         if needs_patch:
             if not dual_patchnorm:
-                self.init_conv = nn.Conv2d(
-                    channels, init_dim, patch_size, stride=patch_size
-                )
+                self.init_conv = nn.Conv2d(channels, init_dim, patch_size, stride=patch_size)
             else:
                 self.init_conv = nn.Sequential(
                     Rearrange(
@@ -386,9 +363,7 @@ class UViT(nn.Module):
                     Rearrange("b h w c -> b c h w"),
                 )
 
-            self.unpatchify = nn.ConvTranspose2d(
-                input_channels, channels, patch_size, stride=patch_size
-            )
+            self.unpatchify = nn.ConvTranspose2d(input_channels, channels, patch_size, stride=patch_size)
 
         # determine dimensions
 
@@ -422,9 +397,7 @@ class UViT(nn.Module):
         self.ups = nn.ModuleList([])
         num_resolutions = len(in_out)
 
-        for ind, ((dim_in, dim_out), factor) in enumerate(
-            zip(in_out, downsample_factor)
-        ):
+        for ind, ((dim_in, dim_out), factor) in enumerate(zip(in_out, downsample_factor)):
             is_last = ind >= (num_resolutions - 1)
 
             self.downs.append(
@@ -450,9 +423,7 @@ class UViT(nn.Module):
             dropout=vit_dropout,
         )
 
-        for ind, ((dim_in, dim_out), factor) in enumerate(
-            zip(reversed(in_out), reversed(downsample_factor))
-        ):
+        for ind, ((dim_in, dim_out), factor) in enumerate(zip(reversed(in_out), reversed(downsample_factor))):
             is_last = ind == (len(in_out) - 1)
 
             self.ups.append(
@@ -573,9 +544,7 @@ def logsnr_schedule_interpolated(fn, image_d, noise_d_low, noise_d_high):
     def inner(t, *args, **kwargs):
         nonlocal logsnr_low_fn
         nonlocal logsnr_high_fn
-        return t * logsnr_low_fn(t, *args, **kwargs) + (1 - t) * logsnr_high_fn(
-            t, *args, **kwargs
-        )
+        return t * logsnr_low_fn(t, *args, **kwargs) + (1 - t) * logsnr_high_fn(t, *args, **kwargs)
 
     return inner
 
@@ -631,13 +600,9 @@ class GaussianDiffusion(nn.Module):
             self.log_snr = logsnr_schedule_shifted(self.log_snr, image_size, noise_d)
 
         if exists(noise_d_low) or exists(noise_d_high):
-            assert exists(noise_d_low) and exists(
-                noise_d_high
-            ), "both noise_d_low and noise_d_high must be set"
+            assert exists(noise_d_low) and exists(noise_d_high), "both noise_d_low and noise_d_high must be set"
 
-            self.log_snr = logsnr_schedule_interpolated(
-                self.log_snr, image_size, noise_d_low, noise_d_high
-            )
+            self.log_snr = logsnr_schedule_interpolated(self.log_snr, image_size, noise_d_low, noise_d_high)
 
         # sampling
 
@@ -659,13 +624,9 @@ class GaussianDiffusion(nn.Module):
         c = -expm1(log_snr - log_snr_next)
 
         squared_alpha, squared_alpha_next = log_snr.sigmoid(), log_snr_next.sigmoid()
-        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (
-            -log_snr_next
-        ).sigmoid()
+        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (-log_snr_next).sigmoid()
 
-        alpha, sigma, alpha_next = map(
-            sqrt, (squared_alpha, squared_sigma, squared_alpha_next)
-        )
+        alpha, sigma, alpha_next = map(sqrt, (squared_alpha, squared_sigma, squared_alpha_next))
 
         batch_log_snr = repeat(log_snr, " -> b", b=x.shape[0])
         pred = self.model(x, batch_log_snr)
@@ -690,9 +651,7 @@ class GaussianDiffusion(nn.Module):
     def p_sample(self, x, time, time_next):
         batch, *_, device = *x.shape, x.device
 
-        model_mean, model_variance = self.p_mean_variance(
-            x=x, time=time, time_next=time_next
-        )
+        model_mean, model_variance = self.p_mean_variance(x=x, time=time, time_next=time_next)
 
         if time_next == 0:
             return model_mean
@@ -722,9 +681,7 @@ class GaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size=16):
-        return self.p_sample_loop(
-            (batch_size, self.channels, self.image_size, self.image_size)
-        )
+        return self.p_sample_loop((batch_size, self.channels, self.image_size, self.image_size))
 
     # training related functions - noise prediction
 
@@ -788,9 +745,7 @@ class GaussianDiffusion(nn.Module):
             img.device,
             self.image_size,
         )
-        assert (
-            h == img_size and w == img_size
-        ), f"height and width of image must be {img_size}"
+        assert h == img_size and w == img_size, f"height and width of image must be {img_size}"
 
         img = normalize_to_neg_one_to_one(img)
         times = torch.zeros((img.shape[0],), device=self.device).float().uniform_(0, 1)

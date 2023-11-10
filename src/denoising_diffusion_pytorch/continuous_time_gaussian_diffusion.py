@@ -154,9 +154,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
         elif noise_schedule == "cosine":
             self.log_snr = alpha_cosine_log_snr
         elif noise_schedule == "learned":
-            log_snr_max, log_snr_min = [
-                beta_linear_log_snr(torch.tensor([time])).item() for time in (0.0, 1.0)
-            ]
+            log_snr_max, log_snr_min = [beta_linear_log_snr(torch.tensor([time])).item() for time in (0.0, 1.0)]
 
             self.log_snr = learned_noise_schedule(
                 log_snr_max=log_snr_max,
@@ -190,13 +188,9 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
         c = -expm1(log_snr - log_snr_next)
 
         squared_alpha, squared_alpha_next = log_snr.sigmoid(), log_snr_next.sigmoid()
-        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (
-            -log_snr_next
-        ).sigmoid()
+        squared_sigma, squared_sigma_next = (-log_snr).sigmoid(), (-log_snr_next).sigmoid()
 
-        alpha, sigma, alpha_next = map(
-            sqrt, (squared_alpha, squared_sigma, squared_alpha_next)
-        )
+        alpha, sigma, alpha_next = map(sqrt, (squared_alpha, squared_sigma, squared_alpha_next))
 
         batch_log_snr = repeat(log_snr, " -> b", b=x.shape[0])
         pred_noise = self.model(x, batch_log_snr)
@@ -221,9 +215,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
     def p_sample(self, x, time, time_next):
         batch, *_, device = *x.shape, x.device
 
-        model_mean, model_variance = self.p_mean_variance(
-            x=x, time=time, time_next=time_next
-        )
+        model_mean, model_variance = self.p_mean_variance(x=x, time=time, time_next=time_next)
 
         if time_next == 0:
             return model_mean
@@ -253,9 +245,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size=16):
-        return self.p_sample_loop(
-            (batch_size, self.channels, self.image_size, self.image_size)
-        )
+        return self.p_sample_loop((batch_size, self.channels, self.image_size, self.image_size))
 
     # training related functions - noise prediction
 
@@ -304,9 +294,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
             img.device,
             self.image_size,
         )
-        assert (
-            h == img_size and w == img_size
-        ), f"height and width of image must be {img_size}"
+        assert h == img_size and w == img_size, f"height and width of image must be {img_size}"
 
         times = self.random_times(b)
         img = normalize_to_neg_one_to_one(img)

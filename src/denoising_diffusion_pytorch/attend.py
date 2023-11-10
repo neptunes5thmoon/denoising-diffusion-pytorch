@@ -10,9 +10,7 @@ from einops import rearrange
 
 # constants
 
-AttentionConfig = namedtuple(
-    "AttentionConfig", ["enable_flash", "enable_math", "enable_mem_efficient"]
-)
+AttentionConfig = namedtuple("AttentionConfig", ["enable_flash", "enable_math", "enable_mem_efficient"])
 
 # helpers
 
@@ -62,14 +60,10 @@ class Attend(nn.Module):
         device_properties = torch.cuda.get_device_properties(torch.device("cuda"))
 
         if device_properties.major == 8 and device_properties.minor == 0:
-            print_once(
-                "A100 GPU detected, using flash attention if input tensor is on cuda"
-            )
+            print_once("A100 GPU detected, using flash attention if input tensor is on cuda")
             self.cuda_config = AttentionConfig(True, False, False)
         else:
-            print_once(
-                "Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda"
-            )
+            print_once("Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda")
             self.cuda_config = AttentionConfig(False, True, True)
 
     def flash_attn(self, q, k, v):
@@ -89,9 +83,7 @@ class Attend(nn.Module):
         # pytorch 2.0 flash attn: q, k, v, mask, dropout, causal, softmax_scale
 
         with torch.backends.cuda.sdp_kernel(**config._asdict()):
-            out = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout if self.training else 0.0
-            )
+            out = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout if self.training else 0.0)
 
         return out
 

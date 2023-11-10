@@ -24,14 +24,7 @@ def default(val, d):
 
 
 class WeightedObjectiveGaussianDiffusion(GaussianDiffusion):
-    def __init__(
-        self,
-        model,
-        *args,
-        pred_noise_loss_weight=0.1,
-        pred_x_start_loss_weight=0.1,
-        **kwargs
-    ):
+    def __init__(self, model, *args, pred_noise_loss_weight=0.1, pred_x_start_loss_weight=0.1, **kwargs):
         super().__init__(model, *args, **kwargs)
         channels = model.channels
         assert model.out_dim == (
@@ -53,16 +46,12 @@ class WeightedObjectiveGaussianDiffusion(GaussianDiffusion):
         x_start_from_noise = self.predict_start_from_noise(x, t=t, noise=pred_noise)
 
         x_starts = torch.stack((x_start_from_noise, pred_x_start), dim=1)
-        weighted_x_start = einsum(
-            "b j h w, b j c h w -> b c h w", normalized_weights, x_starts
-        )
+        weighted_x_start = einsum("b j h w, b j c h w -> b c h w", normalized_weights, x_starts)
 
         if clip_denoised:
             weighted_x_start.clamp_(-1.0, 1.0)
 
-        model_mean, model_variance, model_log_variance = self.q_posterior(
-            weighted_x_start, x, t
-        )
+        model_mean, model_variance, model_log_variance = self.q_posterior(weighted_x_start, x, t)
 
         return model_mean, model_variance, model_log_variance
 
