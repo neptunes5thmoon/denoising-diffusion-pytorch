@@ -1,4 +1,4 @@
-from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
+from denoising_diffusion_pytorch.denoising_diffusion import (
     GaussianDiffusion,
     Trainer,
 )
@@ -18,7 +18,7 @@ from denoising_diffusion_pytorch.v_param_continuous_time_gaussian_diffusion impo
     VParamContinuousTimeGaussianDiffusion,
 )
 
-from denoising_diffusion_pytorch.denoising_diffusion_pytorch_1d import (
+from denoising_diffusion_pytorch.denoising_diffusion_1d import (
     GaussianDiffusion1D,
     Unet1D,
     Trainer1D,
