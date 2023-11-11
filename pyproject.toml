@@ -32,7 +32,7 @@ dependencies = [
     "torch",
     "torchvision",
     "tqdm",
-    "fibsem-tools",
+    "fibsem-tools>=6.0",
     "zarr",
     "mlflow"
 ]
