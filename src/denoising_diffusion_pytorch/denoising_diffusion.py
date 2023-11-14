@@ -751,7 +751,7 @@ class Trainer(object):
                                 for ch in range(all_images.shape[1])
                             ]
                             grids = torch.stack(grid_lists, dim=0)
-                            np_grids = grids.mul(255).add_(0.5).clamp_(0, 255).to("cpu", torch.uint8).numpy()
+                            np_grids = grids.mul(255).clamp_(0, 255).to("cpu", torch.uint8).numpy()
                             checkpoint_group.create_dataset(name=f"{milestone:03d}", data=np_grids)
                         # whether to calculate fid
 
