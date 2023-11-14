@@ -127,6 +127,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         augment_horizontal_flip=True,
         augment_vertical_flip=True,
         annotation_paths=None,
+        allow_single_class_crops=None,  # only has an effect if crop_lists is None
         crop_lists=None,
         raw_datasets=None,
     ):
@@ -153,6 +154,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     scale,
                     augment_horizontal_flip=augment_horizontal_flip,
                     augment_vertical_flip=augment_vertical_flip,
+                    allow_single_class_crops=allow_single_class_crops,
                     annotation_path=ap,
                     crop_list=cl,
                     raw_dataset=rd,
@@ -168,8 +170,10 @@ class CellMapDataset3Das2D(ConcatDataset):
         class_list,
         image_size,
         scale,
+        *,
         augment_horizontal_flip=True,
         augment_vertical_flip=True,
+        allow_single_class_crops=None,  # only has an effect if crop_list is not specified
         annotation_path=None,
         crop_list=None,
         raw_dataset="volumes/raw",
@@ -186,6 +190,13 @@ class CellMapDataset3Das2D(ConcatDataset):
             self.annotation_path = data_path
         else:
             self.annotation_path = annotation_path
+        if allow_single_class_crops is None:
+            self.allow_single_class_crops = {}
+        else:
+            self.allow_single_class_crops = set(self.allow_single_class_crops)
+            if not self.allow_single_class_crops.issubset(set(self.class_list).union({None})):
+                msg = f"`allow_single_class_crops` ({self.allow_single_class_crops}) should be subset of `class_list` ({self.class_list}) and {{None}}."
+                raise ValueError(msg)
         self.crops = self._get_crop_list(crop_list)
         super().__init__(self.crops)
         self.transform = T.Compose(
@@ -200,6 +211,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         return f"{self.__class__.__name__} at {self.data_path} at {self.scale} with crops {[c.crop_name for c in self.crops]}"
 
     def _get_crop_list(self, crop_list=None):
+        filtering = self.allow_single_class_crops != set(self.class_list).union({None})
         if crop_list is None:
             sample = read(self.annotation_path)
             crops = []
@@ -210,7 +222,21 @@ class CellMapDataset3Das2D(ConcatDataset):
                     if all(crop.sizes[dim] >= self.image_size for dim in ['x', 'y']) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
                     ):
-                        crops.append(crop)
+                        if filtering:
+                            present_classes = {
+                                class_name for class_name in self.class_list if self.has_present(class_name)
+                            }
+                            if (
+                                len(present_classes) > 1
+                                or (
+                                    len(present_classes) == 1
+                                    and present_classes.issubset(self.allow_single_class_crops)
+                                )
+                                or (len(present_classes) == 0 and None in self.allow_single_class_crops)
+                            ):
+                                crops.append(crop)
+                        else:
+                            crops.append(crop)
                     else:
                         if all(crop.sizes[dim] >= self.image_size for dim in ['x', 'y']):
                             msg = f"{crop} has sizes {crop.sizes}, which is too small for patch size {self.image_size}"
