@@ -126,6 +126,7 @@ class GaussianDiffusion(nn.Module):
         offset_noise_strength=0.0,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
         min_snr_loss_weight=False,  # https://arxiv.org/abs/2303.09556
         min_snr_gamma=5,
+        channel_weights=None,
     ):
         super().__init__()
         assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
@@ -234,6 +235,15 @@ class GaussianDiffusion(nn.Module):
             register_buffer("loss_weight", maybe_clipped_snr)
         elif objective == "pred_v":
             register_buffer("loss_weight", maybe_clipped_snr / (snr + 1))
+
+        if channel_weights is not None:
+            assert model.channels == len(
+                channel_weights
+            ), f"if channel weights are given the length must match the number of channels ({model.channels})"
+            channel_weights_t = torch.nn.functional.normalize(torch.FloatTensor(channel_weights), p=1, dim=0)
+            register_buffer("channel_weights", channel_weights_t)
+        else:
+            self.channel_weights = None
 
         # auto-normalization of data [0, 1] -> [-1, 1] - can turn off by setting it to be False
 
@@ -476,6 +486,10 @@ class GaussianDiffusion(nn.Module):
             raise ValueError(f"unknown objective {self.objective}")
 
         loss = F.mse_loss(model_out, target, reduction="none")
+
+        # apply channel weights
+        if self.channel_weights is not None:
+            loss = loss * self.channel_weights.view(1, c, 1, 1)
         loss = reduce(loss, "b ... -> b", "mean")
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
