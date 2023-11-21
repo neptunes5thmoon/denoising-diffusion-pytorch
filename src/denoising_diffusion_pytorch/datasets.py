@@ -19,6 +19,7 @@ from denoising_diffusion_pytorch.convenience import exists
 import logging
 import xarray as xr
 from datatree import DataTree
+import dask
 from typing import Any, Mapping, Union, Sequence
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
             ]
         )
+        self._raw_xarray: xr.DataArray|None = None
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__} at {self.data_path} at {self.scale} with crops {[c.crop_name for c in self.crops]}"
@@ -258,9 +260,12 @@ class CellMapDataset3Das2D(ConcatDataset):
             msg = f"List of crops for {self.data_path} with annotations for {self.class_list} at {self.annotation_path} is empty."
             raise ValueError(msg)
         return crops
-
-    def get_raw_xarray(self) -> xr.DataArray | DataTree:
-        return read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
+    
+    @property
+    def raw_xarray(self) -> xr.DataArray | DataTree:
+        if self._raw_xarray is None:
+            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
+        return self._raw_xarray
 
     @property
     def raw_scale(self) -> str:
@@ -315,6 +320,7 @@ class AnnotationCrop3Das2D(Dataset):
         self._coords: None| xr.Coordinates = None
         self.annotated_classes = self.crop.attrs["cellmap"]["annotation"]["class_names"]
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
+        self._class_xarray: dict[str,xr.DataArray] = dict()
 
     @property
     def scales(self) -> dict[str, str]:
@@ -345,7 +351,7 @@ class AnnotationCrop3Das2D(Dataset):
     def get_xarray_attr(self, attr: str) -> Any:
         ref_attr = None
         for class_name in self.class_list:
-            curr_attr = getattr(self.get_class_xarray(class_name), attr)
+            curr_attr = getattr(self.class_xarray(class_name), attr)
             if ref_attr is None:
                 ref_attr = curr_attr
             elif curr_attr != ref_attr:
@@ -380,13 +386,15 @@ class AnnotationCrop3Das2D(Dataset):
             msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
             raise ValueError(msg)
         return self.crop[os.path.join(cls_name, self.scales[cls_name])]
+    
 
-    def get_class_xarray(self, cls_name: str) -> xr.DataArray:
-        if cls_name not in self.annotated_classes:
-            msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
-            raise ValueError(msg)
-        arr: xr.DataArray = read_xarray(os.path.join(self.annotation_path, self.crop_name, cls_name, self.scales[cls_name])) # type: ignore
-        return arr
+    def class_xarray(self, cls_name: str) -> xr.DataArray:
+        if cls_name not in self._class_xarray:    
+            if cls_name not in self.annotated_classes:
+                msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
+                raise ValueError(msg)
+            self._class_xarray[cls_name] = read_xarray(os.path.join(self.annotation_path, self.crop_name, cls_name, self.scales[cls_name])) # type: ignore
+        return self._class_xarray[cls_name]
 
     def get_counts(self, cls_name: str)-> Mapping[str,int]:
         return self.get_class_array(cls_name).attrs["cellmap"]["annotation"]["complement_counts"]
@@ -425,8 +433,8 @@ class AnnotationCrop3Das2D(Dataset):
         vox_slice = {"z": idx, "x": slice(x_start, x_start + self.parent_data.image_size), "y": slice(y_start, y_start + self.parent_data.image_size)}
         arrs = []
         for cls_name in self.parent_data.class_list:
-            cls_arr = self.get_class_xarray(cls_name).isel(vox_slice)
-            arrs.append(cls_arr.copy())
+            cls_arr = self.class_xarray(cls_name).isel(vox_slice)
+            arrs.append(cls_arr.astype(np.float32))
         spatial_slice = {
             dim: slice(
                 int(cls_arr.coords[dim][0]) - self.parent_data.scale[dim] / 2, # hack to deal with misalignment/wrong offsets
@@ -438,9 +446,10 @@ class AnnotationCrop3Das2D(Dataset):
             int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
             int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
         )
-        raw_arr = self.parent_data.get_raw_xarray().sel(spatial_slice).squeeze().copy() / 255.0
+        raw_arr = self.parent_data.raw_xarray.sel(spatial_slice).squeeze() / 255.0
         arrs.append(raw_arr)
-        patch = np.stack(tuple(arr.values.astype(np.float32) for arr in arrs), axis=-1)
+        arrs = dask.compute(tuple(arr.data for arr in arrs))
+        patch = np.stack(arrs, axis=-1)
         return patch # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
 
 
