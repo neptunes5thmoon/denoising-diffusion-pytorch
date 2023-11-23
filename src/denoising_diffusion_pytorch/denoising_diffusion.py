@@ -542,6 +542,9 @@ class Trainer(object):
         max_grad_norm=1.0,
         num_fid_samples=50000,
         save_best_and_latest_only=False,
+        dataloader_nworkers=cpu_count(),
+        persistent_workers=True,
+        prefetch_factor=2,
     ):
         super().__init__()
 
@@ -590,7 +593,9 @@ class Trainer(object):
             batch_size=train_batch_size,
             shuffle=True,
             pin_memory=True,
-            num_workers=cpu_count(),
+            num_workers=dataloader_nworkers,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers
         )
 
         dl = self.accelerator.prepare(dl)

@@ -137,6 +137,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         allow_single_class_crops: Sequence[str|None] | None =None,  # only has an effect if crop_lists is None
         crop_lists: Sequence[Sequence[str|None]] | None =None,
         raw_datasets: Sequence[str] | None=None,
+        dask_workers: int = 0,
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -165,6 +166,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     annotation_path=ap,
                     crop_list=cl,
                     raw_dataset=rd,
+                    dask_workers = dask_workers
                 )
             )
         super().__init__(cellmap_datasets)
@@ -184,6 +186,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         annotation_path: str | None=None,
         crop_list: Sequence[str] | None=None,
         raw_dataset: str|None ="volumes/raw",
+        dask_workers = 0
     ) -> None:
         self.data_path = data_path
         self.raw_dataset = raw_dataset
@@ -193,6 +196,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self._raw_scale: str | None = None
         self.augment_horizontal_flip = augment_horizontal_flip
         self.augment_vertical_flip = augment_vertical_flip
+        self.dask_workers = dask_workers
         self._raw_xarray: xr.DataArray|None = None
         if annotation_path is None:
             self.annotation_path = data_path
@@ -205,6 +209,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                 msg = f"`allow_single_class_crops` ({self.allow_single_class_crops}) should be subset of `class_list` ({self.class_list}) and {{None}}."
                 raise ValueError(msg)
         self.crops = self._get_crop_list(crop_list)
+        
         super().__init__(self.crops)
         self.transform = T.Compose(
             [
@@ -226,7 +231,7 @@ class CellMapDataset3Das2D(ConcatDataset):
             for ds in sample:
                 ann = read(os.path.join(self.annotation_path, ds))
                 if "cellmap" in ann.attrs and "annotation" in ann.attrs["cellmap"]:
-                    crop = AnnotationCrop3Das2D(self, self.annotation_path, ds)
+                    crop = AnnotationCrop3Das2D(self, self.annotation_path, ds, dask_workers = self.dask_workers)
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
                     ):
@@ -256,7 +261,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                             msg = f"{not_incl} not annotated in {crop}"
                         logger.debug(msg)
         else:
-            crops = [AnnotationCrop3Das2D(self, self.annotation_path, crop_name) for crop_name in crop_list]
+            crops = [AnnotationCrop3Das2D(self, self.annotation_path, crop_name, dask_workers=self.dask_workers) for crop_name in crop_list]
         if len(crops) == 0:
             msg = f"List of crops for {self.data_path} with annotations for {self.class_list} at {self.annotation_path} is empty."
             raise ValueError(msg)
@@ -311,7 +316,7 @@ class CellMapDataset3Das2D(ConcatDataset):
 
 
 class AnnotationCrop3Das2D(Dataset):
-    def __init__(self, parent_data: CellMapDataset3Das2D, annotation_path: str, crop_name: str):
+    def __init__(self, parent_data: CellMapDataset3Das2D, annotation_path: str, crop_name: str, dask_workers: int = 0):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
@@ -327,6 +332,8 @@ class AnnotationCrop3Das2D(Dataset):
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str,xr.DataArray] = dict()
         self._raw_xarray = None
+        self.dask_workers = dask_workers
+    
     @property
     def raw_xarray(self):
         if self._raw_xarray is None:
@@ -470,7 +477,8 @@ class AnnotationCrop3Das2D(Dataset):
         )
         raw_arr = self.raw_xarray.sel(spatial_slice).squeeze() / 255.0
         arrs.append(raw_arr)
-        patch = dask.array.stack(arrs, axis=-1).compute()
+        patch = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+        
         return patch # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
 
 
