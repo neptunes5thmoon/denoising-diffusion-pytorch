@@ -183,7 +183,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         allow_single_class_crops: Sequence[str|None] | None =None,  # only has an effect if crop_list is not specified
         annotation_path: str | None=None,
         crop_list: Sequence[str] | None=None,
-        raw_dataset: str ="volumes/raw",
+        raw_dataset: str|None ="volumes/raw",
     ) -> None:
         self.data_path = data_path
         self.raw_dataset = raw_dataset
@@ -193,6 +193,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self._raw_scale: str | None = None
         self.augment_horizontal_flip = augment_horizontal_flip
         self.augment_vertical_flip = augment_vertical_flip
+        self._raw_xarray: xr.DataArray|None = None
         if annotation_path is None:
             self.annotation_path = data_path
         else:
@@ -212,7 +213,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
             ]
         )
-        self._raw_xarray: xr.DataArray|None = None
+        
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__} at {self.data_path} at {self.scale} with crops {[c.crop_name for c in self.crops]}"
@@ -262,13 +263,17 @@ class CellMapDataset3Das2D(ConcatDataset):
         return crops
     
     @property
-    def raw_xarray(self) -> xr.DataArray | DataTree:
+    def raw_xarray(self) -> None | xr.DataArray | DataTree:
+        if self.raw_dataset is None:
+            return None
         if self._raw_xarray is None:
             self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
         return self._raw_xarray
 
     @property
     def raw_scale(self) -> str:
+        if self.raw_dataset is None:
+            return None
         if self._raw_scale is None:
             arr_path = os.path.join(self.data_path, self.raw_dataset)
             msarr = read_xarray(arr_path)
@@ -311,23 +316,40 @@ class AnnotationCrop3Das2D(Dataset):
         self.annotation_path = annotation_path
         self.crop_name = crop_name
         self.crop: ArrayLike = read(os.path.join(self.annotation_path, self.crop_name)) # type: ignore
-        if "cellmap" not in self.crop.attrs or "annotation" not in self.crop.attrs["cellmap"]:
+        if "cellmap" not in self.crop["labels"].attrs or "annotation" not in self.crop["labels"].attrs["cellmap"]:
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
         self._scales: dict[str,str] | None = None
         self._sizes: None| Mapping[str,int]  = None
         self._size: None|int = None
         self._coords: None| xr.Coordinates = None
-        self.annotated_classes = self.crop.attrs["cellmap"]["annotation"]["class_names"]
+        self.annotated_classes = self.crop["labels"].attrs["cellmap"]["annotation"]["class_names"]
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str,xr.DataArray] = dict()
+        self._raw_xarray = None
+    @property
+    def raw_xarray(self):
+        if self._raw_xarray is None:
+            if "raw" in self.crop:
+                try:
+                    mslvl = self._infer_scale_level("raw")
+                    self._raw_xarray = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw", mslvl))
+                except ValueError:
+                    if self.parent_data.raw_dataset is None:
+                        raise ValueError("bla")
+                    self._raw_xarray = self.parent_data.raw_xarray.copy()
+            else:
+                if self.parent_data.raw_dataset is None:
+                    raise ValueError("bla")
+                self._raw_xarray = self.parent_data.raw_xarray.copy()
+        return self._raw_xarray
 
     @property
     def scales(self) -> dict[str, str]:
         if self._scales is None:
             self._scales = {}
             for class_name in self.annotated_classes:
-                self._scales[class_name] = self._infer_scale_level(class_name)
+                self._scales[class_name] = self._infer_scale_level(f"labels/{class_name}")
         return self._scales
 
     @property
@@ -362,30 +384,30 @@ class AnnotationCrop3Das2D(Dataset):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__} {self.crop_name} at {self.annotation_path} from {self.parent_data.__class__.__name__} at {self.parent_data.data_path}"
 
-    def _infer_scale_level(self, cls_name: str) -> str:
-        if cls_name not in self.crop:
-            msg = f"{cls_name} not found in {self}"
+    def _infer_scale_level(self, ds_name: str) -> str:
+        if ds_name not in self.crop:
+            msg = f"{ds_name} not found in {self}"
             raise ValueError(msg)
-        arr_path = os.path.join(self.annotation_path, self.crop_name, cls_name)
-        cls_msarr = read_xarray(arr_path)
+        arr_path = os.path.join(self.annotation_path, self.crop_name, ds_name)
+        msarr = read_xarray(arr_path)
         scale_to_voxelsize = dict()
-        for name, dtarr in cls_msarr.children.items():
+        for name, dtarr in msarr.children.items():
             arr = dtarr.data
             voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
             if voxel_size == self.parent_data.scale:
                 return name
-            scale_to_voxelsize[cls_name] = voxel_size
+            scale_to_voxelsize[ds_name] = voxel_size
         msg = f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. Available scale levels are: {scale_to_voxelsize}"
         raise ValueError(msg)
 
     def get_classes(self) -> list[str]:
-        return self.crop.attrs["cellmap"]["annotation"]["class_names"]
+        return self.crop["labels"].attrs["cellmap"]["annotation"]["class_names"]
 
     def get_class_array(self, cls_name: str):
         if cls_name not in self.annotated_classes:
             msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
             raise ValueError(msg)
-        return self.crop[os.path.join(cls_name, self.scales[cls_name])]
+        return self.crop[os.path.join("labels", cls_name, self.scales[cls_name])]
     
 
     def class_xarray(self, cls_name: str) -> xr.DataArray:
@@ -393,7 +415,7 @@ class AnnotationCrop3Das2D(Dataset):
             if cls_name not in self.annotated_classes:
                 msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
                 raise ValueError(msg)
-            self._class_xarray[cls_name] = read_xarray(os.path.join(self.annotation_path, self.crop_name, cls_name, self.scales[cls_name])) # type: ignore
+            self._class_xarray[cls_name] = read_xarray(os.path.join(self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name])) # type: ignore
         return self._class_xarray[cls_name]
 
     def get_counts(self, cls_name: str)-> Mapping[str,int]:
@@ -446,10 +468,9 @@ class AnnotationCrop3Das2D(Dataset):
             int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
             int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
         )
-        raw_arr = self.parent_data.raw_xarray.sel(spatial_slice).squeeze() / 255.0
+        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze() / 255.0
         arrs.append(raw_arr)
-        arrs = dask.compute(tuple(arr.data for arr in arrs))
-        patch = np.stack(arrs, axis=-1)
+        patch = dask.array.stack(arrs, axis=-1).compute()
         return patch # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
 
 
