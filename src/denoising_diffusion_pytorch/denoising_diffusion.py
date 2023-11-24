@@ -595,7 +595,7 @@ class Trainer(object):
             pin_memory=True,
             num_workers=dataloader_nworkers,
             prefetch_factor=prefetch_factor,
-            persistent_workers=persistent_workers
+            persistent_workers=persistent_workers,
         )
 
         dl = self.accelerator.prepare(dl)
