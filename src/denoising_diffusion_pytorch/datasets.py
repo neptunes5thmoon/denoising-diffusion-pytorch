@@ -470,7 +470,7 @@ class AnnotationCrop3Das2D(Dataset):
         arrs = []
         for cls_name in self.parent_data.class_list:
             cls_arr = self.class_xarray(cls_name).isel(vox_slice)
-            arrs.append(cls_arr.astype(np.float32))
+            arrs.append(cls_arr.astype('float32'))
         spatial_slice = {
             dim: slice(
                 int(cls_arr.coords[dim][0])
@@ -483,7 +483,7 @@ class AnnotationCrop3Das2D(Dataset):
             int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
             int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
         )
-        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze() / 255.0
+        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32') / 255.0
         arrs.append(raw_arr)
         patch = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
 
