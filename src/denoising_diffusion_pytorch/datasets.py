@@ -280,7 +280,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         return self._raw_xarray
 
     @property
-    def raw_scale(self) -> str:
+    def raw_scale(self) -> str | None:
         if self.raw_dataset is None:
             return None
         if self._raw_scale is None:
@@ -324,7 +324,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
-        self.crop: ArrayLike = read(os.path.join(self.annotation_path, self.crop_name))  # type: ignore
+        self.crop: GroupLike = read(os.path.join(self.annotation_path, self.crop_name))  # type: ignore
         if "cellmap" not in self.crop["labels"].attrs or "annotation" not in self.crop["labels"].attrs["cellmap"]:
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
@@ -345,13 +345,15 @@ class AnnotationCrop3Das2D(Dataset):
                 try:
                     mslvl = self._infer_scale_level("raw")
                     self._raw_xarray = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw", mslvl))
-                except ValueError:
+                except ValueError as e:
                     if self.parent_data.raw_dataset is None:
-                        raise ValueError("bla")
+                        msg = "Parent raw dataset is not set and no raw data found in crop"
+                        raise ValueError(msg) from e
                     self._raw_xarray = self.parent_data.raw_xarray.copy()
             else:
                 if self.parent_data.raw_dataset is None:
-                    raise ValueError("bla")
+                    msg = "Parent raw dataset is not set and no raw data found in crop"
+                    raise ValueError(msg)
                 self._raw_xarray = self.parent_data.raw_xarray.copy()
         return self._raw_xarray
 

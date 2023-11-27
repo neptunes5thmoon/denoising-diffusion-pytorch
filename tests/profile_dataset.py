@@ -114,9 +114,9 @@ def run(iterations, dataloader=False, all_data=False):
         "mt_in",
     ]
     data_args["scale"] = {"x": 4, "y": 4, "z": 4}
-    data_args["augment_horizontal_flip"]: True
-    data_args["augment_vertical_flip"]: True
-    data_args["dask_workers"]: 1
+    data_args["augment_horizontal_flip"]= True
+    data_args["augment_vertical_flip"]= True
+    data_args["dask_workers"]= 1
 
     dataset = CellMapDatasets3Das2D(**data_args)
     if dataloader:
