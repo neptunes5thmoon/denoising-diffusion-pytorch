@@ -427,7 +427,8 @@ class AnnotationCrop3Das2D(Dataset):
             if cls_name not in self.annotated_classes:
                 msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
                 raise ValueError(msg)
-            self._class_xarray[cls_name] = read_xarray(os.path.join(self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name]))  # type: ignore
+            full_path = os.path.join(self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name])
+            self._class_xarray[cls_name] = read_xarray(full_path, name=full_path)  # type: ignore
         return self._class_xarray[cls_name]
 
     def get_counts(self, cls_name: str) -> Mapping[str, int]:

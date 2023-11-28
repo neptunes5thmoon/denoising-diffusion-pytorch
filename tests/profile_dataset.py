@@ -8,11 +8,23 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
 import numpy as np
 import warnings
 import time
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore", module="pydantic_ome_ngff")  # line104
 
+def plot_example(arr):
+    arr = arr.cpu()
+    if arr.ndim == 4:
+        arr = arr[np.random.randint(arr.shape[0])]
+    #fig, axs= plt.subplots(2,1)
+    fig, axs = plt.subplots(4,8)
+    for ch, ax in enumerate(axs.flatten()):
+        a = arr[ch-1,...]
+        print(a.min(), a.max())
+        ax.imshow(a, vmin=a.min(),vmax=1, cmap="Greys_r")
+    fig.show()
 
-def run(iterations, dataloader=False, all_data=False):
+def run(iterations, dataloader=False, all_data=False, plot=True):
     # Load configuration from YAML file
     data_args = dict()
     data_args["image_size"] = 96
@@ -119,6 +131,18 @@ def run(iterations, dataloader=False, all_data=False):
     data_args["dask_workers"]= 1
 
     dataset = CellMapDatasets3Das2D(**data_args)
+    trainer_args = {
+            "train_batch_size": 128,
+            "train_lr": 8e-5,
+            "train_num_steps": 700000,
+            "gradient_accumulate_every": 1,
+            "ema_decay": 0.995,
+            "amp": False,
+            "calculate_fid": False,
+            "dataloader_nworkers": 78,
+            "persistent_workers": True,
+            "prefetch_factor": 1,
+    }
     if dataloader:
         architecture_args = {"dim": 64, "channels": 32, "dim_mults": [1, 2, 4, 8]}
         architecture = Unet(**architecture_args)
@@ -163,25 +187,16 @@ def run(iterations, dataloader=False, all_data=False):
             ],
         }
         diffusion = GaussianDiffusion(architecture, **diffusion_args)
-        trainer_args = {
-            "train_batch_size": 128,
-            "train_lr": 8e-5,
-            "train_num_steps": 700000,
-            "gradient_accumulate_every": 1,
-            "ema_decay": 0.995,
-            "amp": False,
-            "calculate_fid": False,
-            "dataloader_nworkers": 78,
-            "persistent_workers": True,
-            "prefetch_factor": 5,
-        }
+    
         trainer = Trainer(diffusion, dataset, results_folder="results", **trainer_args)
     times = []
     print("Start measurement...")
     if dataloader:
         for t in range(iterations):
             start = time.time()
-            next(trainer.dl)
+            a = next(trainer.dl)
+            if plot:
+                plot_example(a)
             interval = time.time() - start
             print(f"interval # {t}: {interval}")
             times.append(interval)
@@ -189,16 +204,19 @@ def run(iterations, dataloader=False, all_data=False):
         print()
         print(len(dataset))
         print()
-        a = np.random.randint(0, len(dataset), size=(iterations, 128))
+        a = np.random.randint(0, len(dataset), size=(iterations, trainer_args["train_batch_size"]))
         for t in range(a.shape[0]):
             start = time.time()
             for b in range(a.shape[1]):
-                dataset[a[t, b]]
+                x = dataset[a[t, b]]
+                if plot:
+                    plot_example(x)
             interval = time.time() - start
             print(f"interval # {t}: {interval}")
             times.append(interval)
     print(f"Average: {np.mean(times)}", flush=True)
-
+    if plot:
+        input("Press enter to continue")
 
 if __name__ == "__main__":
     import argparse
@@ -207,5 +225,6 @@ if __name__ == "__main__":
     parser.add_argument("iterations", type=int)
     parser.add_argument("--dataloader", action='store_true')
     parser.add_argument("--all_data", action="store_true")
+    parser.add_argument("--plot", action="store_true")
     args = parser.parse_args()
-    run(args.iterations, dataloader=args.dataloader, all_data=args.all_data)
+    run(args.iterations, dataloader=args.dataloader, all_data=args.all_data, plot=args.plot)
