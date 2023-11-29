@@ -129,7 +129,7 @@ def run(iterations, dataloader=False, all_data=False, plot=True):
     data_args["augment_horizontal_flip"]= True
     data_args["augment_vertical_flip"]= True
     data_args["dask_workers"]= 1
-
+    data_args["pre_load"] = True
     dataset = CellMapDatasets3Das2D(**data_args)
     trainer_args = {
             "train_batch_size": 128,

@@ -139,6 +139,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         crop_lists: Sequence[Sequence[str | None]] | None = None,
         raw_datasets: Sequence[str] | None = None,
         dask_workers: int = 0,
+        pre_load: bool = False,
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -168,6 +169,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     crop_list=cl,
                     raw_dataset=rd,
                     dask_workers=dask_workers,
+                    pre_load=pre_load,
                 )
             )
         super().__init__(cellmap_datasets)
@@ -189,7 +191,9 @@ class CellMapDataset3Das2D(ConcatDataset):
         crop_list: Sequence[str] | None = None,
         raw_dataset: str | None = "volumes/raw",
         dask_workers=0,
+        pre_load=False,
     ) -> None:
+        self.pre_load = pre_load
         self.data_path = data_path
         self.raw_dataset = raw_dataset
         self.scale = scale
@@ -232,7 +236,9 @@ class CellMapDataset3Das2D(ConcatDataset):
             for ds in sample:
                 ann = read(os.path.join(self.annotation_path, ds))
                 if "cellmap" in ann.attrs and "annotation" in ann.attrs["cellmap"]:
-                    crop = AnnotationCrop3Das2D(self, self.annotation_path, ds, dask_workers=self.dask_workers)
+                    crop = AnnotationCrop3Das2D(
+                        self, self.annotation_path, ds, dask_workers=self.dask_workers, pre_load=self.pre_load
+                    )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
                     ):
@@ -263,7 +269,9 @@ class CellMapDataset3Das2D(ConcatDataset):
                         logger.debug(msg)
         else:
             crops = [
-                AnnotationCrop3Das2D(self, self.annotation_path, crop_name, dask_workers=self.dask_workers)
+                AnnotationCrop3Das2D(
+                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load
+                )
                 for crop_name in crop_list
             ]
         if len(crops) == 0:
@@ -320,7 +328,14 @@ class CellMapDataset3Das2D(ConcatDataset):
 
 
 class AnnotationCrop3Das2D(Dataset):
-    def __init__(self, parent_data: CellMapDataset3Das2D, annotation_path: str, crop_name: str, dask_workers: int = 0):
+    def __init__(
+        self,
+        parent_data: CellMapDataset3Das2D,
+        annotation_path: str,
+        crop_name: str,
+        dask_workers: int = 0,
+        pre_load=False,
+    ):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
@@ -337,6 +352,7 @@ class AnnotationCrop3Das2D(Dataset):
         self._class_xarray: dict[str, xr.DataArray] = dict()
         self._raw_xarray = None
         self.dask_workers = dask_workers
+        self.pre_load = pre_load
 
     @property
     def raw_xarray(self):
@@ -344,7 +360,12 @@ class AnnotationCrop3Das2D(Dataset):
             if "raw" in self.crop:
                 try:
                     mslvl = self._infer_scale_level("raw")
-                    self._raw_xarray = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw", mslvl))
+
+                    self._raw_xarray = read_xarray(
+                        os.path.join(self.annotation_path, self.crop_name, "raw", mslvl), use_dask=not self.pre_load
+                    )
+                    # if self.pre_load:
+                    #    self._raw_xarray = self._raw_xarray.compute(workers = self.dask_workers)
                 except ValueError as e:
                     if self.parent_data.raw_dataset is None:
                         msg = "Parent raw dataset is not set and no raw data found in crop"
@@ -428,7 +449,9 @@ class AnnotationCrop3Das2D(Dataset):
                 msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
                 raise ValueError(msg)
             full_path = os.path.join(self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name])
-            self._class_xarray[cls_name] = read_xarray(full_path, name=full_path)  # type: ignore
+            self._class_xarray[cls_name] = read_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
+            # if self.pre_load:
+            #    self._class_xarray[cls_name] = self._class_xarray[cls_name].compute(workers=self.dask_workers)
         return self._class_xarray[cls_name]
 
     def get_counts(self, cls_name: str) -> Mapping[str, int]:
