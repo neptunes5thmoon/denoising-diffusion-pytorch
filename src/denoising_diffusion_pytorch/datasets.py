@@ -592,7 +592,6 @@ class AnnotationCrop3Das2D(Dataset):
         )
         raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32') 
         if self.contrast_adjust:
-            print(self.contrast_min, self.contrast_max)
             raw_arr = (raw_arr - self.contrast_min)/(self.contrast_max-self.contrast_min)
         else:
             raw_arr = raw_arr / 255.0
