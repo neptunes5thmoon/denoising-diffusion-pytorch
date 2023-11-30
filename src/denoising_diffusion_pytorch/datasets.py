@@ -21,9 +21,40 @@ import xarray as xr
 from datatree import DataTree
 import dask
 from typing import Any, Mapping, Union, Sequence
+from operator import itemgetter
 
 logger = logging.getLogger(__name__)
 
+def get_nested_attr(attrs, key: str | Sequence[str|int]) -> Any:
+    key_list: Sequence[str|int]
+    if isinstance(key, str):
+        key_list = key.split("/")
+    else:
+        key_list = key
+    if len(key_list) == 1:
+        return attrs[key_list[0]]
+    else:
+        return get_nested_attr(attrs[key_list[0]], key_list[1:])
+
+def has_nested_attr(attrs, key: str | Sequence[str|int]) -> bool:
+    key_list: Sequence[str|int]
+    if isinstance(key, str):
+        key_list = key.split("/")
+    else:
+        key_list = key
+    if isinstance(key_list[0], str):
+        if key_list[0] in attrs:
+            return len(key_list) == 1 or has_nested_attr(attrs[key_list[0]], key_list[1:])
+        else:
+            return False
+    elif isinstance(key_list[0], int):
+        if len(attrs) > key_list[0]:
+            return len(key_list) == 1 or has_nested_attr(attrs[key_list[0]], key_list[1:])
+        else:
+            return False
+    else:
+        msg = f"cannot handle key element {key_list[0]} of type {type(key_list[0])}"
+        raise TypeError(msg)
 
 def convert_image_to_fn(img_type, image):
     if image.mode != img_type:
@@ -140,6 +171,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         raw_datasets: Sequence[str] | None = None,
         dask_workers: int = 0,
         pre_load: bool = False,
+        contrast_adjust: bool = True
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -170,6 +202,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     raw_dataset=rd,
                     dask_workers=dask_workers,
                     pre_load=pre_load,
+                    contrast_adjust=contrast_adjust
                 )
             )
         super().__init__(cellmap_datasets)
@@ -192,8 +225,10 @@ class CellMapDataset3Das2D(ConcatDataset):
         raw_dataset: str | None = "volumes/raw",
         dask_workers=0,
         pre_load=False,
+        contrast_adjust=True
     ) -> None:
         self.pre_load = pre_load
+        self.contrast_adjust = contrast_adjust
         self.data_path = data_path
         self.raw_dataset = raw_dataset
         self.scale = scale
@@ -235,9 +270,10 @@ class CellMapDataset3Das2D(ConcatDataset):
             crops = []
             for ds in sample:
                 ann = read(os.path.join(self.annotation_path, ds))
-                if "cellmap" in ann.attrs and "annotation" in ann.attrs["cellmap"]:
+                if has_nested_attr(ann.attrs, ["cellmap", "annotation"]):
                     crop = AnnotationCrop3Das2D(
-                        self, self.annotation_path, ds, dask_workers=self.dask_workers, pre_load=self.pre_load
+                        self, self.annotation_path, ds, dask_workers=self.dask_workers, pre_load=self.pre_load,
+                        contrast_adjust=self.contrast_adjust
                     )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
@@ -270,7 +306,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         else:
             crops = [
                 AnnotationCrop3Das2D(
-                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load
+                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load, contrast_adjust=self.contrast_adjust
                 )
                 for crop_name in crop_list
             ]
@@ -284,7 +320,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         if self.raw_dataset is None:
             return None
         if self._raw_xarray is None:
-            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
+            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale)) 
         return self._raw_xarray
 
     @property
@@ -335,24 +371,28 @@ class AnnotationCrop3Das2D(Dataset):
         crop_name: str,
         dask_workers: int = 0,
         pre_load=False,
+        contrast_adjust=True
     ):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
         self.crop: GroupLike = read(os.path.join(self.annotation_path, self.crop_name))  # type: ignore
-        if "cellmap" not in self.crop["labels"].attrs or "annotation" not in self.crop["labels"].attrs["cellmap"]:
+        if not has_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation"]):
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
         self._scales: dict[str, str] | None = None
         self._sizes: None | Mapping[str, int] = None
         self._size: None | int = None
         self._coords: None | xr.Coordinates = None
-        self.annotated_classes = self.crop["labels"].attrs["cellmap"]["annotation"]["class_names"]
+        self.annotated_classes = get_nested_attr(self.crop["labels"].attrs, ["cellmap","annotation","class_names"])
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str, xr.DataArray] = dict()
         self._raw_xarray = None
         self.dask_workers = dask_workers
         self.pre_load = pre_load
+        self.contrast_adjust = contrast_adjust
+        self._contrast_min = None
+        self._contrast_max = None
 
     @property
     def raw_xarray(self):
@@ -377,6 +417,46 @@ class AnnotationCrop3Das2D(Dataset):
                     raise ValueError(msg)
                 self._raw_xarray = self.parent_data.raw_xarray.copy()
         return self._raw_xarray
+
+
+
+    @property
+    def contrast_min(self):
+        if self._contrast_min is None:
+            if "raw" in self.crop:
+                raw = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
+            else:
+                if self.parent_data.raw_dataset is None:
+                    msg = "Parent raw dataset is not set and no raw data found in crop"
+                    raise ValueError(msg)
+                raw = read_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
+            if has_nested_attr(raw.attrs, ["cellmap", "contrast", "min"]):
+                self._contrast_min = get_nested_attr(raw.attrs, ["cellmap", "contrast", "min"])
+            elif has_nested_attr(raw.attrs, ["contrastAdjustment", "min"]):
+                self._contrast_min = get_nested_attr(raw.attrs, ["contrastAdjustment", "min"])
+            else:
+                logger.debug("Defaulting min of contrast adjustment to 0.")
+                self._contrast_min = 0
+        return self._contrast_min
+
+    @property
+    def contrast_max(self):
+        if self._contrast_max is None:
+            if "raw" in self.crop:
+                raw = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
+            else:
+                if self.parent_data.raw_dataset is None:
+                    msg = "Parent raw dataset is not set and no raw data found in crop"
+                    raise ValueError(msg)
+                raw = read_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
+            if has_nested_attr(raw.attrs, ["cellmap", "contrast", "max"]):
+                self._contrast_max = get_nested_attr(raw.attrs, ["cellmap", "contrast", "max"])
+            elif has_nested_attr(raw.attrs, ["contrastAdjustment", "max"]):
+                self._contrast_max = get_nested_attr(raw.attrs, ["contrastAdjustment", "max"])
+            else:
+                logger.debug("Defaulting max of contrast adjustment to 255.")
+                self._contrast_max = 255
+        return self._contrast_max
 
     @property
     def scales(self) -> dict[str, str]:
@@ -435,7 +515,7 @@ class AnnotationCrop3Das2D(Dataset):
         raise ValueError(msg)
 
     def get_classes(self) -> list[str]:
-        return self.crop["labels"].attrs["cellmap"]["annotation"]["class_names"]
+        return get_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation", "class_names"])
 
     def get_class_array(self, cls_name: str):
         if cls_name not in self.annotated_classes:
@@ -455,10 +535,11 @@ class AnnotationCrop3Das2D(Dataset):
         return self._class_xarray[cls_name]
 
     def get_counts(self, cls_name: str) -> Mapping[str, int]:
-        return self.get_class_array(cls_name).attrs["cellmap"]["annotation"]["complement_counts"]
+        return get_nested_attr(self.get_class_array(cls_name).attrs, ["cellmap", "annotation", "complement_counts"])
 
     def get_possibilities(self, cls_name: str) -> set[str]:
-        return set(self.get_class_array(cls_name).attrs["cellmap"]["annotation"]["annotation_type"]["encoding"].keys())
+        return set(get_nested_attr(self.get_class_array(cls_name).attrs, 
+                                   ["cellmap", "annotation", "annotation_type", "encoding"]).keys())
 
     def get_present_count(self, cls_name: str) -> int:
         counts = self.get_counts(cls_name)
@@ -509,7 +590,12 @@ class AnnotationCrop3Das2D(Dataset):
             int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
             int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
         )
-        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32') / 255.0
+        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32') 
+        if self.contrast_adjust:
+            print(self.contrast_min, self.contrast_max)
+            raw_arr = (raw_arr - self.contrast_min)/(self.contrast_max-self.contrast_min)
+        else:
+            raw_arr = raw_arr / 255.0
         arrs.append(raw_arr)
         patch = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
 

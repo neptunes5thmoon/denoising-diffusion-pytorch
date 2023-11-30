@@ -21,7 +21,7 @@ def plot_example(arr):
     for ch, ax in enumerate(axs.flatten()):
         a = arr[ch-1,...]
         print(a.min(), a.max())
-        ax.imshow(a, vmin=a.min(),vmax=1, cmap="Greys_r")
+        ax.imshow(a, vmin=0,vmax=1, cmap="Greys_r")
     fig.show()
 
 def run(iterations, dataloader=False, all_data=False, plot=True):
