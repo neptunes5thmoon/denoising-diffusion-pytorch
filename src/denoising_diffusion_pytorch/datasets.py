@@ -171,7 +171,8 @@ class CellMapDatasets3Das2D(ConcatDataset):
         raw_datasets: Sequence[str] | None = None,
         dask_workers: int = 0,
         pre_load: bool = False,
-        contrast_adjust: bool = True
+        contrast_adjust: bool = True,
+        include_raw: bool = True        
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -202,7 +203,8 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     raw_dataset=rd,
                     dask_workers=dask_workers,
                     pre_load=pre_load,
-                    contrast_adjust=contrast_adjust
+                    contrast_adjust=contrast_adjust,
+                    include_raw=include_raw
                 )
             )
         super().__init__(cellmap_datasets)
@@ -225,7 +227,8 @@ class CellMapDataset3Das2D(ConcatDataset):
         raw_dataset: str | None = "volumes/raw",
         dask_workers=0,
         pre_load=False,
-        contrast_adjust=True
+        contrast_adjust=True,
+        include_raw=True,
     ) -> None:
         self.pre_load = pre_load
         self.contrast_adjust = contrast_adjust
@@ -238,6 +241,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self.augment_horizontal_flip = augment_horizontal_flip
         self.augment_vertical_flip = augment_vertical_flip
         self.dask_workers = dask_workers
+        self.include_raw = include_raw
         self._raw_xarray: xr.DataArray | None = None
         if annotation_path is None:
             self.annotation_path = data_path
@@ -273,7 +277,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                 if has_nested_attr(ann.attrs, ["cellmap", "annotation"]):
                     crop = AnnotationCrop3Das2D(
                         self, self.annotation_path, ds, dask_workers=self.dask_workers, pre_load=self.pre_load,
-                        contrast_adjust=self.contrast_adjust
+                        contrast_adjust=self.contrast_adjust, include_raw=self.include_raw
                     )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
@@ -306,7 +310,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         else:
             crops = [
                 AnnotationCrop3Das2D(
-                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load, contrast_adjust=self.contrast_adjust
+                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load, contrast_adjust=self.contrast_adjust, include_raw=self.include_raw
                 )
                 for crop_name in crop_list
             ]
@@ -371,7 +375,8 @@ class AnnotationCrop3Das2D(Dataset):
         crop_name: str,
         dask_workers: int = 0,
         pre_load=False,
-        contrast_adjust=True
+        contrast_adjust=True,
+        include_raw=True
     ):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
@@ -393,6 +398,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.contrast_adjust = contrast_adjust
         self._contrast_min = None
         self._contrast_max = None
+        self.include_raw = include_raw
 
     @property
     def raw_xarray(self):
@@ -590,12 +596,13 @@ class AnnotationCrop3Das2D(Dataset):
             int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
             int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
         )
-        raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32') 
-        if self.contrast_adjust:
-            raw_arr = (raw_arr - self.contrast_min)/(self.contrast_max-self.contrast_min)
-        else:
-            raw_arr = raw_arr / 255.0
-        arrs.append(raw_arr)
+        if self.include_raw:
+            raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32')
+            if self.contrast_adjust:
+                raw_arr = (raw_arr - self.contrast_min)/(self.contrast_max-self.contrast_min)
+            else:
+                raw_arr = raw_arr / 255.0
+            arrs.append(raw_arr)
         patch = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
 
         return patch  # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
