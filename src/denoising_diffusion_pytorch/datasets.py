@@ -22,6 +22,7 @@ from datatree import DataTree
 import dask
 from typing import Any, Mapping, Union, Sequence
 from operator import itemgetter
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
