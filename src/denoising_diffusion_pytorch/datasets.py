@@ -25,8 +25,9 @@ from operator import itemgetter
 
 logger = logging.getLogger(__name__)
 
-def get_nested_attr(attrs, key: str | Sequence[str|int]) -> Any:
-    key_list: Sequence[str|int]
+
+def get_nested_attr(attrs, key: str | Sequence[str | int]) -> Any:
+    key_list: Sequence[str | int]
     if isinstance(key, str):
         key_list = key.split("/")
     else:
@@ -36,8 +37,9 @@ def get_nested_attr(attrs, key: str | Sequence[str|int]) -> Any:
     else:
         return get_nested_attr(attrs[key_list[0]], key_list[1:])
 
-def has_nested_attr(attrs, key: str | Sequence[str|int]) -> bool:
-    key_list: Sequence[str|int]
+
+def has_nested_attr(attrs, key: str | Sequence[str | int]) -> bool:
+    key_list: Sequence[str | int]
     if isinstance(key, str):
         key_list = key.split("/")
     else:
@@ -55,6 +57,7 @@ def has_nested_attr(attrs, key: str | Sequence[str|int]) -> bool:
     else:
         msg = f"cannot handle key element {key_list[0]} of type {type(key_list[0])}"
         raise TypeError(msg)
+
 
 def convert_image_to_fn(img_type, image):
     if image.mode != img_type:
@@ -172,7 +175,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         dask_workers: int = 0,
         pre_load: bool = False,
         contrast_adjust: bool = True,
-        include_raw: bool = True        
+        include_raw: bool = True,
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -204,7 +207,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     dask_workers=dask_workers,
                     pre_load=pre_load,
                     contrast_adjust=contrast_adjust,
-                    include_raw=include_raw
+                    include_raw=include_raw,
                 )
             )
         super().__init__(cellmap_datasets)
@@ -276,8 +279,13 @@ class CellMapDataset3Das2D(ConcatDataset):
                 ann = read(os.path.join(self.annotation_path, ds))
                 if has_nested_attr(ann.attrs, ["cellmap", "annotation"]):
                     crop = AnnotationCrop3Das2D(
-                        self, self.annotation_path, ds, dask_workers=self.dask_workers, pre_load=self.pre_load,
-                        contrast_adjust=self.contrast_adjust, include_raw=self.include_raw
+                        self,
+                        self.annotation_path,
+                        ds,
+                        dask_workers=self.dask_workers,
+                        pre_load=self.pre_load,
+                        contrast_adjust=self.contrast_adjust,
+                        include_raw=self.include_raw,
                     )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
@@ -310,7 +318,13 @@ class CellMapDataset3Das2D(ConcatDataset):
         else:
             crops = [
                 AnnotationCrop3Das2D(
-                    self, self.annotation_path, crop_name, dask_workers=self.dask_workers, pre_load=self.pre_load, contrast_adjust=self.contrast_adjust, include_raw=self.include_raw
+                    self,
+                    self.annotation_path,
+                    crop_name,
+                    dask_workers=self.dask_workers,
+                    pre_load=self.pre_load,
+                    contrast_adjust=self.contrast_adjust,
+                    include_raw=self.include_raw,
                 )
                 for crop_name in crop_list
             ]
@@ -324,7 +338,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         if self.raw_dataset is None:
             return None
         if self._raw_xarray is None:
-            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale)) 
+            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
         return self._raw_xarray
 
     @property
@@ -376,7 +390,7 @@ class AnnotationCrop3Das2D(Dataset):
         dask_workers: int = 0,
         pre_load=False,
         contrast_adjust=True,
-        include_raw=True
+        include_raw=True,
     ):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
@@ -389,7 +403,7 @@ class AnnotationCrop3Das2D(Dataset):
         self._sizes: None | Mapping[str, int] = None
         self._size: None | int = None
         self._coords: None | xr.Coordinates = None
-        self.annotated_classes = get_nested_attr(self.crop["labels"].attrs, ["cellmap","annotation","class_names"])
+        self.annotated_classes = get_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation", "class_names"])
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str, xr.DataArray] = dict()
         self._raw_xarray = None
@@ -423,8 +437,6 @@ class AnnotationCrop3Das2D(Dataset):
                     raise ValueError(msg)
                 self._raw_xarray = self.parent_data.raw_xarray.copy()
         return self._raw_xarray
-
-
 
     @property
     def contrast_min(self):
@@ -544,8 +556,11 @@ class AnnotationCrop3Das2D(Dataset):
         return get_nested_attr(self.get_class_array(cls_name).attrs, ["cellmap", "annotation", "complement_counts"])
 
     def get_possibilities(self, cls_name: str) -> set[str]:
-        return set(get_nested_attr(self.get_class_array(cls_name).attrs, 
-                                   ["cellmap", "annotation", "annotation_type", "encoding"]).keys())
+        return set(
+            get_nested_attr(
+                self.get_class_array(cls_name).attrs, ["cellmap", "annotation", "annotation_type", "encoding"]
+            ).keys()
+        )
 
     def get_present_count(self, cls_name: str) -> int:
         counts = self.get_counts(cls_name)
@@ -599,7 +614,7 @@ class AnnotationCrop3Das2D(Dataset):
         if self.include_raw:
             raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32')
             if self.contrast_adjust:
-                raw_arr = (raw_arr - self.contrast_min)/(self.contrast_max-self.contrast_min)
+                raw_arr = (raw_arr - self.contrast_min) / (self.contrast_max - self.contrast_min)
             else:
                 raw_arr = raw_arr / 255.0
             arrs.append(raw_arr)

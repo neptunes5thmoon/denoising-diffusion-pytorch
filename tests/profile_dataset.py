@@ -12,17 +12,19 @@ import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore", module="pydantic_ome_ngff")  # line104
 
+
 def plot_example(arr):
     arr = arr.cpu()
     if arr.ndim == 4:
         arr = arr[np.random.randint(arr.shape[0])]
-    #fig, axs= plt.subplots(2,1)
-    fig, axs = plt.subplots(4,8)
+    # fig, axs= plt.subplots(2,1)
+    fig, axs = plt.subplots(4, 8)
     for ch, ax in enumerate(axs.flatten()):
-        a = arr[ch-1,...]
+        a = arr[ch - 1, ...]
         print(a.min(), a.max())
-        ax.imshow(a, vmin=0,vmax=1, cmap="Greys_r")
+        ax.imshow(a, vmin=0, vmax=1, cmap="Greys_r")
     fig.show()
+
 
 def run(iterations, dataloader=False, all_data=False, plot=True):
     # Load configuration from YAML file
@@ -126,22 +128,22 @@ def run(iterations, dataloader=False, all_data=False, plot=True):
         "mt_in",
     ]
     data_args["scale"] = {"x": 4, "y": 4, "z": 4}
-    data_args["augment_horizontal_flip"]= True
-    data_args["augment_vertical_flip"]= True
-    data_args["dask_workers"]= 1
+    data_args["augment_horizontal_flip"] = True
+    data_args["augment_vertical_flip"] = True
+    data_args["dask_workers"] = 1
     data_args["pre_load"] = True
     dataset = CellMapDatasets3Das2D(**data_args)
     trainer_args = {
-            "train_batch_size": 128,
-            "train_lr": 8e-5,
-            "train_num_steps": 700000,
-            "gradient_accumulate_every": 1,
-            "ema_decay": 0.995,
-            "amp": False,
-            "calculate_fid": False,
-            "dataloader_nworkers": 78,
-            "persistent_workers": True,
-            "prefetch_factor": 1,
+        "train_batch_size": 128,
+        "train_lr": 8e-5,
+        "train_num_steps": 700000,
+        "gradient_accumulate_every": 1,
+        "ema_decay": 0.995,
+        "amp": False,
+        "calculate_fid": False,
+        "dataloader_nworkers": 78,
+        "persistent_workers": True,
+        "prefetch_factor": 1,
     }
     if dataloader:
         architecture_args = {"dim": 64, "channels": 32, "dim_mults": [1, 2, 4, 8]}
@@ -187,7 +189,7 @@ def run(iterations, dataloader=False, all_data=False, plot=True):
             ],
         }
         diffusion = GaussianDiffusion(architecture, **diffusion_args)
-    
+
         trainer = Trainer(diffusion, dataset, results_folder="results", **trainer_args)
     times = []
     print("Start measurement...")
@@ -217,6 +219,7 @@ def run(iterations, dataloader=False, all_data=False, plot=True):
     print(f"Average: {np.mean(times)}", flush=True)
     if plot:
         input("Press enter to continue")
+
 
 if __name__ == "__main__":
     import argparse
