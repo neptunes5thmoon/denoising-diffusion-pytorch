@@ -523,6 +523,7 @@ class Trainer(object):
         self,
         diffusion_model,
         dataset,
+        inference_saver,
         *,
         train_batch_size=16,
         gradient_accumulate_every=1,
@@ -554,6 +555,8 @@ class Trainer(object):
             split_batches=split_batches,
             mixed_precision=mixed_precision_type if amp else "no",
         )
+        # saver
+        self.inference_saver = inference_saver
 
         # model
 
@@ -577,7 +580,7 @@ class Trainer(object):
 
         self.train_num_steps = train_num_steps
         self.image_size = diffusion_model.image_size
-
+        self.sampling_timesteps = diffusion_model.sampling_timesteps
         self.max_grad_norm = max_grad_norm
 
         # dataset and dataloader
@@ -668,14 +671,14 @@ class Trainer(object):
             "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
-        model_path = str(self.results_folder / f"model-{milestone}.pt")
+        model_path = str(self.results_folder / f"ckpt-{milestone}" / f"model-{milestone}.pt")
         torch.save(data, model_path)
 
     def load(self, milestone):
         accelerator = self.accelerator
         device = accelerator.device
 
-        data = torch.load(str(self.results_folder / f"model-{milestone}.pt"), map_location=device)
+        data = torch.load(str(self.results_folder / f"ckpt-{milestone}" / f"model-{milestone}.pt"), map_location=device)
 
         model = self.accelerator.unwrap_model(self.model)
         model.load_state_dict(data["model"])
@@ -694,8 +697,6 @@ class Trainer(object):
     def train(self):
         accelerator = self.accelerator
         device = accelerator.device
-        if self.channels > 3:
-            checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder / "samples.zarr")))
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -748,18 +749,28 @@ class Trainer(object):
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                         else:
-                            grid_lists = [
-                                utils.make_grid(
-                                    all_images[:, ch : ch + 1, ...],
-                                    nrow=int(math.sqrt(self.num_samples)),
-                                )[0]
-                                for ch in range(all_images.shape[1])
-                            ]
-                            grids = torch.stack(grid_lists, dim=0)
-                            np_grids = grids.mul(255).clamp_(0, 255).to("cpu", torch.uint8).numpy()
-                            checkpoint_group.create_dataset(name=f"{milestone:03d}", data=np_grids)
-                        # whether to calculate fid
+                            inference_saver.save_sample(
+                                str(self.results_folder / f"ckpt_{milestone}"),
+                                all_images,
+                                [f"t{self.sampling_timesteps + 1}"],
+                            )
+                            # checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder/ f"ckpt_{milestone}" /samples/"final_timestep.zarr")))
+                            # grid_lists = [
+                            #     utils.make_grid(
+                            #         all_images[:, ch : ch + 1, ...],
+                            #         nrow=int(math.sqrt(self.num_samples)),
+                            #     )[0]
+                            #     for ch in range(all_images.shape[1])
+                            # ]
+                            # color_grp = checkpoint_group.create_group("split_channels")
+                            # grid_grp = color_grp.create_group(f"grid_{self.num_samples}")
+                            # img_grp = grid_grp.create("00000")
+                            # grids = torch.stack(grid_lists, dim=0)
+                            # np_grids = grids.mul(255).clamp_(0, 255).to("cpu", torch.uint8).numpy()
+                            # #
+                            # img_grp.create_dataset(name=f"{milestone:03d}", data=np_grids)
 
+                        # whether to calculate fid
                         if self.calculate_fid:
                             if self.channels <= 3:
                                 fid_score = self.fid_scorer.fid_score()

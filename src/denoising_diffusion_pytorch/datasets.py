@@ -381,6 +381,58 @@ class CellMapDataset3Das2D(ConcatDataset):
     #     raise ValueError(msg)
 
 
+def get_next_sample(existing: Sequence[str], digits=None):
+    if len(existing) < 1:
+        next_sample = 0
+        if digits is None:
+            digits = 5
+            logger.info(f"Number of digits not specified and no strings given to derive from. Defaulting to {digits}.")
+    else:
+        next_sample = max(int(s) for s in list(existing)) + 1
+        if digits is None:
+            digits = len(list(existing)[0])
+        elif digits != len(list(existing)[0]):
+            raise ValueError(f"Specified to use {digits} digits but found string with {len(list(existing)[0])} digits")
+    next_sample_str = "{num:0{digits}d}".format(num=next_sample, digits=digits)
+    return next_sample_str
+
+
+class PreProcessOptions(Enum):
+    COLORIZE = colorize
+    CLIP = clip
+
+
+class InferenceSaver:
+    def __init__(self, channel_assignment, sample_digits=5):
+        self.sample_digits = sample_digits
+        self.channel_assignment = channel_assignment
+
+    def save_sample(self, path, samples, timesteps: Sequence[int | str]):
+        num_samples = samples.shape[0]
+        sample_per_row = int(math.sqrt(num_samples))
+        if samples.ndim == 5 and len(timesteps) != samples.shape[1]:
+            raise ValueError(
+                f"Number of timesteps ({len(timesteps)}) doesn't match length of time dimension ({samples.shape[1]})"
+            )
+        zarr_path = os.path.join(self.path, "samples", f"grid_{num_samples}.zarr")
+        zarr_grp = zarr.group(store=zarr.DirectoryStore(zarr_path))
+        next_sample = get_next_sample(grid_grp.keys(), digits=self.sample_digits)
+        sample_grp = zarr_grp.require_group(next_sample)
+        for k, t in enumerate(timesteps):
+            time_grp = sample_grp.require_group(t)
+            if samples.ndim == 5:
+                time_sample = samples[:, k, ...]
+            else:
+                time_sample = samples
+            for img_name, (channel_slice, preprocessfuncs) in self.channel_assignment.items():
+                img_data = time_sample[slice(*channel_slice), ...]
+                for func_option in preprocessfuncs:
+                    if func_option is not None:
+                        img_data = PreProcessOptions[func_option](img_data)
+                img_gridded = utils.make_grid(img_data, samples_per_row)
+                time_grp.create_dataset(img_name, data=img_gridded)
+
+
 class AnnotationCrop3Das2D(Dataset):
     def __init__(
         self,
