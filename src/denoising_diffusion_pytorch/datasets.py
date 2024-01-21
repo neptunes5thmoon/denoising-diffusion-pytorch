@@ -397,6 +397,10 @@ def get_next_sample(existing: Sequence[str], digits=None):
     next_sample_str = "{num:0{digits}d}".format(num=next_sample, digits=digits)
     return next_sample_str
 
+def colorize(img):
+    return img
+def clip(img):
+    return img
 
 class PreProcessOptions(Enum):
     COLORIZE = colorize
