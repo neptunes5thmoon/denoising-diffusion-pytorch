@@ -413,7 +413,7 @@ class PreProcessOptions(Enum):
     TO_CPU = partial(to_cpu)
 
     def __call__(self, *args):
-        self.value(*args)
+        return self.value(*args)
 
 
 class InferenceSaver:
