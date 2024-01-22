@@ -12,6 +12,7 @@ from fibsem_tools.io.util import ArrayLike, GroupLike
 from PIL import Image
 from torch import Tensor
 from torch import nn
+from torchvision import utils
 from torch.utils.data import Dataset, ConcatDataset
 from torchvision import transforms as T
 
@@ -23,6 +24,7 @@ import dask
 from typing import Any, Mapping, Union, Sequence
 from operator import itemgetter
 from enum import Enum
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +407,7 @@ def clip(img):
 class PreProcessOptions(Enum):
     COLORIZE = partial(colorize)
     CLIP = partial(clip)
-    
+
     def __call__(self, *args):
         self.value(*args)
 
@@ -417,14 +419,14 @@ class InferenceSaver:
 
     def save_sample(self, path, samples, timesteps: Sequence[int | str]):
         num_samples = samples.shape[0]
-        sample_per_row = int(math.sqrt(num_samples))
+        samples_per_row = int(math.sqrt(num_samples))
         if samples.ndim == 5 and len(timesteps) != samples.shape[1]:
             raise ValueError(
                 f"Number of timesteps ({len(timesteps)}) doesn't match length of time dimension ({samples.shape[1]})"
             )
-        zarr_path = os.path.join(self.path, "samples", f"grid_{num_samples}.zarr")
+        zarr_path = os.path.join(path, "samples", f"grid_{num_samples}.zarr")
         zarr_grp = zarr.group(store=zarr.DirectoryStore(zarr_path))
-        next_sample = get_next_sample(grid_grp.keys(), digits=self.sample_digits)
+        next_sample = get_next_sample(zarr_grp.keys(), digits=self.sample_digits)
         sample_grp = zarr_grp.require_group(next_sample)
         for k, t in enumerate(timesteps):
             time_grp = sample_grp.require_group(t)
