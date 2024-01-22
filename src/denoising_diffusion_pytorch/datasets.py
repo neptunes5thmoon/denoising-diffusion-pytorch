@@ -172,7 +172,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         annotation_paths: Sequence[str | None] | None = None,
         allow_single_class_crops: Sequence[str | None] | None = None,  # only has an effect if crop_lists is None
         crop_lists: Sequence[Sequence[str | None]] | None = None,
-        raw_datasets: Sequence[str] | None = None,
+        raw_datasets: Sequence[str| None] | None = None,
         dask_workers: int = 0,
         pre_load: bool = False,
         contrast_adjust: bool = True,
@@ -405,8 +405,10 @@ def clip(img):
 class PreProcessOptions(Enum):
     COLORIZE = partial(colorize)
     CLIP = partial(clip)
+    
     def __call__(self, *args):
         self.value(*args)
+
 
 class InferenceSaver:
     def __init__(self, channel_assignment, sample_digits=5):
