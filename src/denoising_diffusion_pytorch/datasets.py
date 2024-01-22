@@ -403,9 +403,10 @@ def clip(img):
     return img
 
 class PreProcessOptions(Enum):
-    COLORIZE = colorize
-    CLIP = clip
-
+    COLORIZE = partial(colorize)
+    CLIP = partial(clip)
+    def __call__(self, *args):
+        self.value(*args)
 
 class InferenceSaver:
     def __init__(self, channel_assignment, sample_digits=5):
