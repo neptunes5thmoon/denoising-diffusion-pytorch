@@ -7,6 +7,8 @@ from denoising_diffusion_pytorch.datasets import (
     ZarrDataset,
     CellMapDatasets3Das2D,
     CellMapDataset3Das2D,
+)
+from denoising_diffusion_pytorch.exporters import (
     InferenceSaver,
     PreProcessOptions,
 )
