@@ -654,6 +654,8 @@ class Trainer(object):
             self.best_fid = 1e10  # infinite
 
         self.save_best_and_latest_only = save_best_and_latest_only
+        total_milestones = math.ceil(self.train_num_steps / self.save_and_sample_every)
+        self.milestone_digits = len(str(total_milestones))
 
     @property
     def device(self):
@@ -671,14 +673,14 @@ class Trainer(object):
             "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
-        model_path = str(self.results_folder / f"ckpt-{milestone}" / f"model-{milestone}.pt")
+        model_path = str(self.results_folder / f"ckpt_{milestone}" / f"model_{milestone:0{self.milestone_digits}d}.pt")
         torch.save(data, model_path)
 
     def load(self, milestone):
         accelerator = self.accelerator
         device = accelerator.device
 
-        data = torch.load(str(self.results_folder / f"ckpt-{milestone}" / f"model-{milestone}.pt"), map_location=device)
+        data = torch.load(str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}" / f"model_{milestone:0{self.milestone_digits}d}.pt"), map_location=device)
 
         model = self.accelerator.unwrap_model(self.model)
         model.load_state_dict(data["model"])
@@ -697,6 +699,7 @@ class Trainer(object):
     def train(self):
         accelerator = self.accelerator
         device = accelerator.device
+
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -745,12 +748,12 @@ class Trainer(object):
                         if self.channels <= 3:
                             utils.save_image(
                                 all_images,
-                                str(self.results_folder / f"sample-{milestone}.png"),
+                                str(self.results_folder / f"sample_{milestone:0{self.milestone_digits}d}.png"),
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                         else:
                             self.inference_saver.save_sample(
-                                str(self.results_folder / f"ckpt_{milestone}"),
+                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"),
                                 all_images,
                                 [f"t{self.sampling_timesteps + 1}"],
                             )
