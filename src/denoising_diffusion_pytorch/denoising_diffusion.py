@@ -749,7 +749,7 @@ class Trainer(object):
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                         else:
-                            inference_saver.save_sample(
+                            self.inference_saver.save_sample(
                                 str(self.results_folder / f"ckpt_{milestone}"),
                                 all_images,
                                 [f"t{self.sampling_timesteps + 1}"],
