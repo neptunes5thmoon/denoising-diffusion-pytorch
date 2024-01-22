@@ -420,7 +420,6 @@ def to_dtype(img: torch.Tensor, dtype=torch.uint8) -> torch.Tensor:
 def griddify(img: torch.Tensor) -> torch.Tensor:
     num_samples = img.shape[0]
     samples_per_row = int(math.sqrt(num_samples))
-    print(num_samples, samples_per_row)
     img = utils.make_grid(img, samples_per_row)
     return img
 
