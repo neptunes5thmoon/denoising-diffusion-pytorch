@@ -25,6 +25,7 @@ from typing import Any, Mapping, Union, Sequence
 from operator import itemgetter
 from enum import Enum
 import math
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -399,14 +400,17 @@ def get_next_sample(existing: Sequence[str], digits=None):
     next_sample_str = "{num:0{digits}d}".format(num=next_sample, digits=digits)
     return next_sample_str
 
-def colorize(img):
-    return img
-def clip(img):
-    return img
+def to_uint8(img):
+    return img.mul(255).clamp_(0,255)
+
+def to_cpu(img):
+    return img.to("cpu", torch.uint8).numpy()
+
+
 
 class PreProcessOptions(Enum):
-    COLORIZE = partial(colorize)
-    CLIP = partial(clip)
+    TO_UINT8 = partial(to_uint8)
+    TO_CPU = partial(to_cpu)
 
     def __call__(self, *args):
         self.value(*args)
