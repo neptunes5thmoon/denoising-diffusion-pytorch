@@ -175,7 +175,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         annotation_paths: Sequence[str | None] | None = None,
         allow_single_class_crops: Sequence[str | None] | None = None,  # only has an effect if crop_lists is None
         crop_lists: Sequence[Sequence[str | None]] | None = None,
-        raw_datasets: Sequence[str| None] | None = None,
+        raw_datasets: Sequence[str | None] | None = None,
         dask_workers: int = 0,
         pre_load: bool = False,
         contrast_adjust: bool = True,
@@ -400,20 +400,34 @@ def get_next_sample(existing: Sequence[str], digits=None):
     next_sample_str = "{num:0{digits}d}".format(num=next_sample, digits=digits)
     return next_sample_str
 
-def to_uint8(img):
-    return img.mul(255).clamp_(0,255)
 
-def to_cpu(img):
-    return img.to("cpu", torch.uint8).numpy()
+def adjust_range(img: torch.Tensor, values=(0, 255)) -> torch.Tensor:
+    return img.mul(values[1]).clamp_(values[0], values[1])
 
-def griddify(img):
+
+def to_numpy(img: torch.Tensor) -> np.array:
+    return img.numpy()
+
+
+def to_cpu(img: torch.Tensor) -> torch.Tensor:
+    return img.to("cpu")
+
+
+def to_dtype(img: torch.Tensor, dtype=torch.uint8) -> torch.Tensor:
+    return img.to(dtype)
+
+
+def griddify(img: torch.Tensor) -> torch.Tensor:
     num_samples = img.shape[0]
     samples_per_row = int(math.sqrt(num_samples))
     img = utils.make_grid(img, samples_per_row)
-    return img 
+    return img
+
 
 class PreProcessOptions(Enum):
-    TO_UINT8 = partial(to_uint8)
+    TO_UINT8 = partial(to_dtype, dtype=torch.uint8)
+    ADJUST_RANGE_0_255 = partial(adjust_range, values=(0, 255))
+    TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
 
@@ -448,8 +462,7 @@ class InferenceSaver:
                 for func_option in preprocessfuncs:
                     if func_option is not None:
                         img_data = func_option(img_data)
-                img_gridded = utils.make_grid(img_data, samples_per_row)
-                time_grp.create_dataset(img_name, data=img_gridded)
+                time_grp.create_dataset(img_name, data=img_data)
 
 
 class AnnotationCrop3Das2D(Dataset):
