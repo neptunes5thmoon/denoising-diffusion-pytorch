@@ -459,7 +459,7 @@ class InferenceSaver:
             else:
                 time_sample = samples
             for img_name, (channel_slice, preprocessfuncs) in self.channel_assignment.items():
-                img_data = time_sample[slice(*channel_slice), ...]
+                img_data = time_sample[:, slice(*channel_slice), ...]
                 for func_option in preprocessfuncs:
                     if func_option is not None:
                         img_data = func_option(img_data)
