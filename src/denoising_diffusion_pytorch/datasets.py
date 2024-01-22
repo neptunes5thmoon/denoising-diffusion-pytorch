@@ -442,7 +442,7 @@ class InferenceSaver:
                 img_data = time_sample[slice(*channel_slice), ...]
                 for func_option in preprocessfuncs:
                     if func_option is not None:
-                        img_data = PreProcessOptions[func_option](img_data)
+                        img_data = func_option(img_data)
                 img_gridded = utils.make_grid(img_data, samples_per_row)
                 time_grp.create_dataset(img_name, data=img_gridded)
 
