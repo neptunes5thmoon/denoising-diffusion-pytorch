@@ -406,11 +406,16 @@ def to_uint8(img):
 def to_cpu(img):
     return img.to("cpu", torch.uint8).numpy()
 
-
+def griddify(img):
+    num_samples = img.shape[0]
+    samples_per_row = int(math.sqrt(num_samples))
+    img = utils.make_grid(img, samples_per_row)
+    return img 
 
 class PreProcessOptions(Enum):
     TO_UINT8 = partial(to_uint8)
     TO_CPU = partial(to_cpu)
+    GRIDDIFY = partial(griddify)
 
     def __call__(self, *args):
         return self.value(*args)
