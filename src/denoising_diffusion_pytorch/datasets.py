@@ -383,10 +383,6 @@ class CellMapDataset3Das2D(ConcatDataset):
     #     raise ValueError(msg)
 
 
-
-
-
-
 class AnnotationCrop3Das2D(Dataset):
     def __init__(
         self,
