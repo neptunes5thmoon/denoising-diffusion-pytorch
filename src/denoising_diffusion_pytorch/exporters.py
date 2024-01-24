@@ -4,7 +4,7 @@ import os
 from enum import Enum
 from functools import partial
 from typing import Sequence, Union, Tuple, Optional, Dict, Literal
-
+import numpy as np
 import torch
 import zarr
 from PIL import Image
