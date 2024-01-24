@@ -29,7 +29,29 @@ def get_next_sample(existing: Sequence[str], digits=None):
     next_sample_str = "{num:0{digits}d}".format(num=next_sample, digits=digits)
     return next_sample_str
 
-
+def convert_color_to_float(color: Union[Tuple[int,int, int], Tuple[float, float,float]])-> Tuple[float,float,float]:
+    if len(color) != 3:
+        msg = f"Color tuple {color} is not of length 3"
+        raise ValueError(msg)
+    if not all(isinstance(col, type(color[0])) for col in color):
+        msg = f"Inconsistent types in color tuple: {tuple(type(col) for col in color)}"
+        raise ValueError(msg)
+    if isinstance(color[0], int):
+        for col in color:
+            if col < 0 or col > 255:
+                msg = f"Integer color values should be in range [0, 255]; found {color}"
+                raise ValueError(msg)
+        return tuple(col/255. for col in color)
+    elif isinstance(color[0], float):
+        for col in color:
+            if col < 0 or col > 1:
+                msg = f"Float color values should be in range [0, 1]; found {color}"
+                raise ValueError(msg)
+        return color
+    else:
+        msg = f"Can't handle color values of type {color[0]}"
+        raise TypeError(msg)
+    
 def adjust_range(img: torch.Tensor, values=(0, 255)) -> torch.Tensor:
     return img.mul(values[1]).clamp_(values[0], values[1])
 
@@ -49,7 +71,7 @@ def griddify(img: torch.Tensor) -> torch.Tensor:
     img = utils.make_grid(img, samples_per_row)
     return img
 
-def colorize(img: np.array, colors=Optional[Sequence[Tuple[float,float,float]]]=None, color_threshold=0):
+def colorize(img: np.array, colors:Optional[Sequence[Tuple[float,float,float]]]=None, color_threshold=0):
     #todo
     # img ch, x, y
     if colors is None or len(colors) < img.shape[0]:
@@ -89,14 +111,19 @@ class PostProcessOptions(Enum):
 
         
 class SampleExporter(object):
-    def __init__(self, channel_assignment, sample_digits=5, file_format=".zarr", sample_batch_size=1, colors=None):
+    def __init__(self, channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, PostProcessOptions]]]], sample_digits: int =5, file_format: Literal[".zarr", ".png"] =".zarr", sample_batch_size: int =1, colors=None, color_threshold=0):
         self.sample_digits = sample_digits
         self.channel_assignment = channel_assignment
         self.file_format = file_format
         self.sample_batch_size = sample_batch_size
-        self.colors = colors
+        if colors is None:
+            self.colors = colors
+        else:
+            self.colors = []
+            for color in colors:
+                self.colors.append(convert_color_to_float(color))
+        self.color_threshold = color_threshold
         
-
     def _make_dir_zarr(self, path):
         zarr_grp = zarr.group(store=zarr.DirectoryStore(path))
         next_sample = get_next_sample(zarr_grp.keys(), digits=self.sample_digits)
@@ -133,7 +160,9 @@ class SampleExporter(object):
                 for func_option in preprocessfuncs:
                     if func_option is not None:
                         if func_option == PostProcessOptions.COLORIZE:
-                            img_data = func_option(img_data, colors=self.colors)
+                            img_data = func_option(img_data, 
+                                                   colors=self.colors, 
+                                                   color_threshold=self.color_threshold)
                         else:
                             img_data = func_option(img_data)
                 if self.file_format == ".zarr":
