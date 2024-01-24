@@ -30,26 +30,50 @@ def get_next_sample(existing: Sequence[str], digits=None):
     return next_sample_str
 
 
-def adjust_range(img: torch.Tensor, *args, values=(0, 255)) -> torch.Tensor:
+def adjust_range(img: torch.Tensor, values=(0, 255)) -> torch.Tensor:
     return img.mul(values[1]).clamp_(values[0], values[1])
 
 
-def to_numpy(img: torch.Tensor, *args) -> np.array:
+def to_numpy(img: torch.Tensor) -> np.array:
     return img.numpy()
 
-
-def to_cpu(img: torch.Tensor, *args) -> torch.Tensor:
+def to_cpu(img: torch.Tensor) -> torch.Tensor:
     return img.to("cpu")
 
-
-def to_dtype(img: torch.Tensor, *args, dtype=torch.uint8) -> torch.Tensor:
+def to_dtype(img: torch.Tensor, dtype=torch.uint8) -> torch.Tensor:
     return img.to(dtype)
 
-def griddify(img: torch.Tensor, *args) -> torch.Tensor:
+def griddify(img: torch.Tensor) -> torch.Tensor:
     num_samples = img.shape[0]
     samples_per_row = int(math.sqrt(num_samples))
     img = utils.make_grid(img, samples_per_row)
     return img
+
+def colorize(img: np.array, colors=Optional[Sequence[Tuple[float,float,float]]]=None, color_threshold=0):
+    #todo
+    # img ch, x, y
+    if colors is None or len(colors) < img.shape[0]:
+        new_colors = distinctipy.get_colors(img.shape[0], colors=colors)
+        if colors is None:
+            colors = new_colors
+        else:
+            colors = colors.extend(new_colors)
+    sample[sample <= color_threshold] = 0
+    # find for each pixel which image has max value
+    max_lbl_id_arr = np.argmax(img, axis=0, keepdims=True)
+    # keep track of what those actual values are
+    max_lbl_val_arr = np.take_along_axis(img, max_lbl_id_arr, axis=0)
+    rgb_image = np.zeros((3, img.shape[1], img.shape[2]))
+    #normalizing_image = np.zeros((1, img.shape[1], img.shape[2]), dtype=np.uint8)
+    for lbl_id, color in zip(range(img.shape[0], colors)):
+        lbl_bin_arr = max_lbl_id_arr == lbl_id
+        lbl_arr = values * lbl_bin_arr
+        rgb_img_tpl += tuple(lbl_arr * col for col in color)
+        rgb_image += np.stack(rgb_img_tpl, axis=0)
+    if np.issubdtype(arr.dtype, np.integer):
+        rgb_image = np.round(rgb_image).astype(img.dtype)
+        
+    return rgb_image
 
 
 class PostProcessOptions(Enum):
@@ -58,17 +82,20 @@ class PostProcessOptions(Enum):
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
+    COLORIZE = partial(colorize)
+    
+    def __call__(self, *args, **kwargs):
+        return self.value(*args, **kwargs)
 
-    def __call__(self, *args):
-        return self.value(*args)
-
-
+        
 class SampleExporter(object):
-    def __init__(self, channel_assignment, sample_digits=5, file_format=".zarr", sample_batch_size=1):
+    def __init__(self, channel_assignment, sample_digits=5, file_format=".zarr", sample_batch_size=1, colors=None):
         self.sample_digits = sample_digits
         self.channel_assignment = channel_assignment
         self.file_format = file_format
         self.sample_batch_size = sample_batch_size
+        self.colors = colors
+        
 
     def _make_dir_zarr(self, path):
         zarr_grp = zarr.group(store=zarr.DirectoryStore(path))
@@ -105,7 +132,10 @@ class SampleExporter(object):
                 img_data = sample[:, slice(*channel_slice), ...]
                 for func_option in preprocessfuncs:
                     if func_option is not None:
-                        img_data = func_option(img_data, img_name)
+                        if func_option == PostProcessOptions.COLORIZE:
+                            img_data = func_option(img_data, colors=self.colors)
+                        else:
+                            img_data = func_option(img_data)
                 if self.file_format == ".zarr":
                     self._save_img_zarr(sample_path, img_name, img_data)
                 elif self.file_format == ".png":
