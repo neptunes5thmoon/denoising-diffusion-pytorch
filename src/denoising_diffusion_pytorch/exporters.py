@@ -88,7 +88,7 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
             colors = new_colors
         else:
             colors = colors.extend(new_colors)
-    sample[sample <= color_threshold] = 0
+    img[img <= color_threshold] = 0
     # find for each pixel which image has max value
     max_lbl_id_arr = np.argmax(img, axis=0, keepdims=True)
     # keep track of what those actual values are
