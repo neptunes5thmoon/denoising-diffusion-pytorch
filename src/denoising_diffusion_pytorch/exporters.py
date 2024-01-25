@@ -97,7 +97,7 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
     # normalizing_image = np.zeros((1, img.shape[1], img.shape[2]), dtype=np.uint8)
     for lbl_id, color in zip(range(img.shape[0]), colors):
         lbl_bin_arr = max_lbl_id_arr == lbl_id
-        lbl_arr = values * lbl_bin_arr
+        lbl_arr = max_lbl_val_arr * lbl_bin_arr
         rgb_img_tpl += tuple(lbl_arr * col for col in color)
         rgb_image += np.stack(rgb_img_tpl, axis=0)
     if np.issubdtype(arr.dtype, np.integer):
