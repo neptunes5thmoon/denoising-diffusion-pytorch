@@ -72,30 +72,42 @@ def to_dtype(img: torch.Tensor, dtype=torch.uint8) -> torch.Tensor:
     return img.to(dtype)
 
 
-def griddify(img: torch.Tensor) -> torch.Tensor:
+def griddify(img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
+    if isinstance(img, np.ndarray):
+        img = torch.from_numpy(img)
+        to_np = True
+    else:
+        to_np = False
     num_samples = img.shape[0]
     samples_per_row = int(math.sqrt(num_samples))
     img = utils.make_grid(img, samples_per_row)
+    if to_np:
+        img = img.numpy()
     return img
 
 
 def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]]] = None, color_threshold=0):
-    # todo
     # img ch, x, y
-    if colors is None or len(colors) < img.shape[0]:
-        new_colors = distinctipy.get_colors(img.shape[0], colors=colors)
+    if img.ndim == 4:  # s, ch, x, y
+        color_axis = 1
+    elif img.ndim == 3:  # ch, x, y
+        color_axis = 0
+    if colors is None or len(colors) < img.shape[color_axis]:
+        new_colors = distinctipy.get_colors(img.shape[color_axis], colors=colors)
         if colors is None:
             colors = new_colors
         else:
             colors = colors.extend(new_colors)
     img[img <= color_threshold] = 0
     # find for each pixel which image has max value
-    max_lbl_id_arr = np.argmax(img, axis=0, keepdims=True)
+    max_lbl_id_arr = np.argmax(img, axis=color_axis, keepdims=True)
     # keep track of what those actual values are
-    max_lbl_val_arr = np.take_along_axis(img, max_lbl_id_arr, axis=0)
-    rgb_image = np.zeros((3, img.shape[1], img.shape[2]))
+    max_lbl_val_arr = np.take_along_axis(img, max_lbl_id_arr, axis=color_axis)
+    target_shape = list(img.shape)
+    target_shape[color_axis] = 3
+    rgb_image = np.zeros(target_shape)
     # normalizing_image = np.zeros((1, img.shape[1], img.shape[2]), dtype=np.uint8)
-    for lbl_id, color in zip(range(img.shape[0]), colors):
+    for lbl_id, color in zip(range(img.shape[color_axis]), colors):
         lbl_bin_arr = max_lbl_id_arr == lbl_id
         lbl_arr = max_lbl_val_arr * lbl_bin_arr
         rgb_img_tpl = tuple(lbl_arr * col for col in color)
