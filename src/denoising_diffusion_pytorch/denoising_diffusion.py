@@ -673,14 +673,25 @@ class Trainer(object):
             "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
-        model_path = str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}" / f"model_{milestone:0{self.milestone_digits}d}.pt")
+        model_path = str(
+            self.results_folder
+            / f"ckpt_{milestone:0{self.milestone_digits}d}"
+            / f"model_{milestone:0{self.milestone_digits}d}.pt"
+        )
         torch.save(data, model_path)
 
     def load(self, milestone):
         accelerator = self.accelerator
         device = accelerator.device
 
-        data = torch.load(str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}" / f"model_{milestone:0{self.milestone_digits}d}.pt"), map_location=device)
+        data = torch.load(
+            str(
+                self.results_folder
+                / f"ckpt_{milestone:0{self.milestone_digits}d}"
+                / f"model_{milestone:0{self.milestone_digits}d}.pt"
+            ),
+            map_location=device,
+        )
 
         model = self.accelerator.unwrap_model(self.model)
         model.load_state_dict(data["model"])
@@ -753,9 +764,7 @@ class Trainer(object):
                             )
                         else:
                             self.inference_saver.save_sample(
-                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"),
-                                all_images,
-                                [f"t{self.sampling_timesteps + 1}"],
+                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"), all_images
                             )
                             # checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder/ f"ckpt_{milestone}" /samples/"final_timestep.zarr")))
                             # grid_lists = [
