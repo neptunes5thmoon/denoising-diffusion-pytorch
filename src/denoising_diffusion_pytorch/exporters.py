@@ -99,8 +99,8 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
         lbl_bin_arr = max_lbl_id_arr == lbl_id
         lbl_arr = max_lbl_val_arr * lbl_bin_arr
         rgb_img_tpl = tuple(lbl_arr * col for col in color)
-        rgb_image += np.stack(rgb_img_tpl, axis=0)
-    if np.issubdtype(arr.dtype, np.integer):
+        rgb_image += np.concatenate(rgb_img_tpl, axis=color_axis)
+    if np.issubdtype(img.dtype, np.integer):
         rgb_image = np.round(rgb_image).astype(img.dtype)
 
     return rgb_image
@@ -157,7 +157,7 @@ class SampleExporter(object):
         return sample_dir
 
     def _save_img_png(self, path, name, data):
-        img = Image.fromarray(data.permute(1, 2, 0))
+        img = Image.fromarray(data.transpose(1, 2, 0))
         fp = os.path.join(path, f"{name}.png")
         img.save(fp, format="PNG")
 
