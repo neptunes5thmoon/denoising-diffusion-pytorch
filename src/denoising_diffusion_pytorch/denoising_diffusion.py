@@ -764,8 +764,7 @@ class Trainer(object):
                             )
                         else:
                             self.inference_saver.save_sample(
-                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"),
-                                all_images
+                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"), all_images
                             )
                             # checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder/ f"ckpt_{milestone}" /samples/"final_timestep.zarr")))
                             # grid_lists = [
