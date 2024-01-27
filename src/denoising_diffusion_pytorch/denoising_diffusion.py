@@ -523,7 +523,7 @@ class Trainer(object):
         self,
         diffusion_model,
         dataset,
-        inference_saver,
+        exporter,
         *,
         train_batch_size=16,
         gradient_accumulate_every=1,
@@ -556,7 +556,7 @@ class Trainer(object):
             mixed_precision=mixed_precision_type if amp else "no",
         )
         # saver
-        self.inference_saver = inference_saver
+        self.exporter = exporter
 
         # model
 
@@ -613,6 +613,7 @@ class Trainer(object):
         if self.accelerator.is_main_process:
             self.ema = EMA(diffusion_model, beta=ema_decay, update_every=ema_update_every)
             self.ema.to(self.device)
+            self.sampler = self.ema.ema_model
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok=True)
@@ -763,7 +764,7 @@ class Trainer(object):
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                         else:
-                            self.inference_saver.save_sample(
+                            self.exporter.save_sample(
                                 str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"), all_images
                             )
                             # checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder/ f"ckpt_{milestone}" /samples/"final_timestep.zarr")))
@@ -801,3 +802,5 @@ class Trainer(object):
                 pbar.update(1)
 
         accelerator.print("training complete")
+    
+    
