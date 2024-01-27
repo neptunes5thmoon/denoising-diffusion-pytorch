@@ -173,7 +173,10 @@ class SampleExporter(object):
         fp = os.path.join(path, f"{name}.png")
         img.save(fp, format="PNG")
 
-    def save_sample(self, path, samples):
+    def save_sample(self, path, samples) -> int:
+        if samples.shape[0] < self.sample_batch_size:
+            msg = f"Can't export sample with `sample_batch_size` ({self.sample_batch_size}) larger than number of samples ({samples.shape[0]})"
+            raise ValueError(msg)
         for batch_start in range(0, samples.shape[0] - self.sample_batch_size + 1, self.sample_batch_size):
             sample = samples[batch_start : batch_start + self.sample_batch_size]
             if self.file_format == ".zarr":
@@ -197,4 +200,5 @@ class SampleExporter(object):
                     self._save_img_png(sample_path, img_name, img_data)
                 else:
                     msg = f"Unknown file format ({self.file_format}) requested."
-                    raise ValueError(msg)
+                    raise ValueError(msg) 
+        return (samples.shape[0]//self.sample_batch_size) * self.sample_batch_size
