@@ -129,7 +129,9 @@ class PostProcessOptions(Enum):
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)
 
+
 PostProcessOptionsNames = Literal[tuple(e.name for e in PostProcessOptions)]
+
 
 class SampleExporter(object):
     def __init__(
@@ -140,7 +142,7 @@ class SampleExporter(object):
         sample_batch_size: int = 1,
         colors=None,
         color_threshold=0,
-        dir = "samples"
+        dir="samples",
     ):
         self.sample_digits = sample_digits
         self.channel_assignment = channel_assignment
@@ -205,5 +207,5 @@ class SampleExporter(object):
                     self._save_img_png(sample_path, img_name, img_data)
                 else:
                     msg = f"Unknown file format ({self.file_format}) requested."
-                    raise ValueError(msg) 
-        return (samples.shape[0]//self.sample_batch_size) * self.sample_batch_size
+                    raise ValueError(msg)
+        return (samples.shape[0] // self.sample_batch_size) * self.sample_batch_size

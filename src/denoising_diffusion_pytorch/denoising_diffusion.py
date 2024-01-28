@@ -9,6 +9,8 @@ import mlflow
 import torch
 import torch.nn.functional as F
 import zarr
+import os
+
 from accelerate import Accelerator
 from einops import rearrange, reduce
 from ema_pytorch import EMA
@@ -681,6 +683,12 @@ class Trainer(object):
         )
         torch.save(data, model_path)
 
+    def load_last(self):
+        os.listdir(self.results_folder)
+        milestones = [int(ckpt.split('_')[1]) for ckt in os.listdir(self.results_folder)]
+        if len(milestones) > 1:
+            self.load(max(milestones))
+
     def load(self, milestone):
         accelerator = self.accelerator
         device = accelerator.device
@@ -712,6 +720,7 @@ class Trainer(object):
         accelerator = self.accelerator
         device = accelerator.device
 
+        self.load_last()
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
@@ -802,5 +811,3 @@ class Trainer(object):
                 pbar.update(1)
 
         accelerator.print("training complete")
-    
-    
