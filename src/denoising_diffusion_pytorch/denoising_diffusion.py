@@ -684,8 +684,7 @@ class Trainer(object):
         torch.save(data, model_path)
 
     def load_last(self):
-        os.listdir(self.results_folder)
-        milestones = [int(ckpt.split('_')[1]) for ckt in os.listdir(self.results_folder)]
+        milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
         if len(milestones) > 1:
             self.load(max(milestones))
 
