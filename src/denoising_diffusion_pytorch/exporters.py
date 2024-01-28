@@ -139,11 +139,13 @@ class SampleExporter(object):
         sample_batch_size: int = 1,
         colors=None,
         color_threshold=0,
+        dir = "samples"
     ):
         self.sample_digits = sample_digits
         self.channel_assignment = channel_assignment
         self.file_format = file_format
         self.sample_batch_size = sample_batch_size
+        self.dir_name = dir
         if colors is None:
             self.colors = colors
         else:
@@ -153,7 +155,7 @@ class SampleExporter(object):
         self.color_threshold = color_threshold
 
     def _make_dir_zarr(self, path):
-        zarr_grp = zarr.group(store=zarr.DirectoryStore(path))
+        zarr_grp = zarr.group(store=zarr.DirectoryStore(os.path.join(path, f"{self.dir_name}.zarr")))
         next_sample = get_next_sample(zarr_grp.keys(), digits=self.sample_digits)
         sample_grp = zarr_grp.require_group(next_sample)
         return sample_grp
@@ -162,9 +164,10 @@ class SampleExporter(object):
         grp.create_dataset(name, data=data)
 
     def _make_dir_png(self, path):
-        os.makedirs(path, exist_ok=True)
-        next_sample = get_next_sample(os.listdir(path), digits=self.sample_digits)
-        sample_dir = os.path.join(path, next_sample)
+        sample_path = os.path.join(path, self.dir_name)
+        os.makedirs(sample_path, exist_ok=True)
+        next_sample = get_next_sample(os.listdir(sample_path), digits=self.sample_digits)
+        sample_dir = os.path.join(sample_path, next_sample)
         os.makedirs(sample_dir)
         return sample_dir
 
@@ -173,16 +176,16 @@ class SampleExporter(object):
         fp = os.path.join(path, f"{name}.png")
         img.save(fp, format="PNG")
 
-    def save_sample(self, path, samples) -> int:
+    def save_sample(self, parent_path, samples) -> int:
         if samples.shape[0] < self.sample_batch_size:
             msg = f"Can't export sample with `sample_batch_size` ({self.sample_batch_size}) larger than number of samples ({samples.shape[0]})"
             raise ValueError(msg)
         for batch_start in range(0, samples.shape[0] - self.sample_batch_size + 1, self.sample_batch_size):
             sample = samples[batch_start : batch_start + self.sample_batch_size]
             if self.file_format == ".zarr":
-                sample_path = self._make_dir_zarr(path)
+                sample_path = self._make_dir_zarr(parent_path)
             elif self.file_format == ".png":
-                sample_path = self._make_dir_png(path)
+                sample_path = self._make_dir_png(parent_path)
             else:
                 msg = f"Unknown file format ({self.file_format}) requested."
                 raise ValueError(msg)
