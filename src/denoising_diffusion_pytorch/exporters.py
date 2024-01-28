@@ -129,11 +129,12 @@ class PostProcessOptions(Enum):
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)
 
+PostProcessOptionsNames = Literal[tuple(e.name for e in PostProcessOptions)]
 
 class SampleExporter(object):
     def __init__(
         self,
-        channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, PostProcessOptions]]]],
+        channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, PostProcessOptionsNames]]]],
         sample_digits: int = 5,
         file_format: Literal[".zarr", ".png"] = ".zarr",
         sample_batch_size: int = 1,
@@ -193,6 +194,7 @@ class SampleExporter(object):
                 img_data = sample[:, slice(*channel_slice), ...]
                 for func_option in preprocessfuncs:
                     if func_option is not None:
+                        func_option = PostProcessOptions[func_option]
                         if func_option == PostProcessOptions.COLORIZE:
                             img_data = func_option(img_data, colors=self.colors, color_threshold=self.color_threshold)
                         else:

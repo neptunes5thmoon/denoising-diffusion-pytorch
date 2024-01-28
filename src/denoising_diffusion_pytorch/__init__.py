@@ -21,6 +21,7 @@ from denoising_diffusion_pytorch.denoising_diffusion_1d import (
 from denoising_diffusion_pytorch.elucidated_diffusion import ElucidatedDiffusion
 from denoising_diffusion_pytorch.exporters import (
     PostProcessOptions,
+    PostProcessOptionsNames,
     SampleExporter,
 )
 from denoising_diffusion_pytorch.learned_gaussian_diffusion import (
