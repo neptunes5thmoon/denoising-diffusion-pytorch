@@ -685,7 +685,7 @@ class Trainer(object):
 
     def load_last(self):
         milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
-        if len(milestones) > 1:
+        if len(milestones) > 0:
             self.load(max(milestones))
 
     def load(self, milestone):
