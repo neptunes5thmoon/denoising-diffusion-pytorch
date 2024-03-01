@@ -10,8 +10,9 @@ import zarr
 from PIL import Image
 from torchvision import utils
 import distinctipy
+logging.basicConfig()
 logger = logging.getLogger(__name__)
-
+# logger.setLevel(logging.DEBUG)
 
 def get_next_sample(existing: Sequence[str], digits=None):
     if len(existing) < 1:
@@ -87,6 +88,42 @@ def griddify(img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.nda
     return img
 
 
+def make_labels(img: np.array, label_threshold=0):
+    if img.ndim == 4:  # s, ch, x, y
+        label_axis = 1
+    elif img.ndim == 3:  # ch, x, y
+        label_axis = 0
+    else:
+        msg = f"Can't handle arrays with {img.ndim} dimensions for making labels"
+        raise ValueError(msg)
+    img[img <= label_threshold] = 0
+    max_lbl_id_arr = np.argmax(img, axis=label_axis, keepdims=True)
+    return max_lbl_id_arr
+
+
+def rgb_labels(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]]]):
+    if img.ndim == 4 and img.shape[1] == 1:  # s, ch, x, y
+        color_axis = 1
+    elif img.ndim == 3 and img.shape[0] == 1:  # ch, x, y
+        color_axis = 0
+    elif img.ndim == 3:
+        img = np.expand_dims(img, 1)
+        color_axis = 1
+    else:
+        msg = f"Can't handle arrays with {img.ndim} dimensions for making labels"
+        raise ValueError(msg)
+    target_shape = list(img.shape)
+    target_shape[color_axis] = 3
+    rgb_image = np.zeros(target_shape, dtype=np.float32)
+    for lbl_id, color in enumerate(colors):
+        rgb_lbl_arr = tuple(((img == lbl_id) * col).astype(np.float32) for col in color)
+        rgb_image += np.concatenate(rgb_lbl_arr, axis=color_axis)
+    if np.issubdtype(img.dtype, np.integer):
+        rgb_image = np.round(rgb_image * 255).astype(np.uint8)
+
+    return rgb_image
+
+
 def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]]] = None, color_threshold=0):
     # img ch, x, y
     if img.ndim == 4:  # s, ch, x, y
@@ -129,6 +166,8 @@ class ProcessOptions(Enum):
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
+    MAKE_LABELS = partial(make_labels)
+    RGB_LABELS = partial(rgb_labels)
     COLORIZE = partial(colorize)
 
     def __call__(self, *args, **kwargs):
@@ -141,12 +180,12 @@ ProcessOptionsNames = Literal[tuple(e.name for e in ProcessOptions)]
 class SampleExporter(object):
     def __init__(
         self,
-        channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, PostProcessOptionsNames]]]],
+        channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, ProcessOptionsNames]]]],
         sample_digits: int = 5,
         file_format: Literal[".zarr", ".png"] = ".zarr",
         sample_batch_size: int = 1,
         colors=None,
-        color_threshold=0,
+        threshold=0,
         dir="samples",
     ):
         self.sample_digits = sample_digits
@@ -160,7 +199,7 @@ class SampleExporter(object):
             self.colors = []
             for color in colors:
                 self.colors.append(convert_color_to_float(color))
-        self.color_threshold = color_threshold
+        self.threshold = threshold
 
     def _make_dir_zarr(self, path):
         zarr_grp = zarr.group(store=zarr.DirectoryStore(os.path.join(path, f"{self.dir_name}.zarr")))
@@ -197,13 +236,19 @@ class SampleExporter(object):
             else:
                 msg = f"Unknown file format ({self.file_format}) requested."
                 raise ValueError(msg)
-            for img_name, (channel_slice, preprocessfuncs) in self.channel_assignment.items():
+            for img_name, (channel_slice, processfuncs) in self.channel_assignment.items():
                 img_data = sample[:, slice(*channel_slice), ...]
                 for func_option in processfuncs:
+                    logger.debug(f"Processing image {img_name} with shape {img_data.shape} with {func_option}.")
+                    logger.debug(f"Image has min: {img_data.min()} and max {img_data.max()}")
                     if func_option is not None:
                         func_option = ProcessOptions[func_option]
                         if func_option == ProcessOptions.COLORIZE:
                             img_data = func_option(img_data, colors=self.colors, color_threshold=self.threshold)
+                        elif func_option == ProcessOptions.RGB_LABELS:
+                            img_data = func_option(img_data, colors=self.colors)
+                        elif func_option == ProcessOptions.MAKE_LABELS:
+                            img_data = func_option(img_data, label_threshold=self.threshold)
                         else:
                             img_data = func_option(img_data)
                 if self.file_format == ".zarr":
