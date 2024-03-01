@@ -12,9 +12,10 @@ from fibsem_tools.io.util import ArrayLike, GroupLike
 from PIL import Image
 from torch import Tensor
 from torch import nn
+import torch
 from torchvision import utils
 from torch.utils.data import Dataset, ConcatDataset
-from torchvision import transforms as T
+from torchvision.transforms import v2 as T
 
 from denoising_diffusion_pytorch.convenience import exists
 import logging
@@ -23,6 +24,7 @@ from datatree import DataTree
 import dask
 from typing import Any, Mapping, Union, Sequence
 from operator import itemgetter
+from enum import Enum
 
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,20 @@ class ZarrDataset(Dataset):
         return self.transform(img)
 
 
+class LabelRepresentation(str, Enum):
+    BINARY = "binary"
+    ONE_HOT = "one_hot"
+    CLASS_IDS = "class_ids"
+
+
+class RawChannelOptions(str, Enum):
+    APPEND = "append"
+    PREPEND = "prepend"
+    FIRST = "first"
+    SECOND = "second"
+    EXCLUDE = "exclude"
+
+
 class CellMapDatasets3Das2D(ConcatDataset):
     def __init__(
         self,
@@ -177,7 +193,9 @@ class CellMapDatasets3Das2D(ConcatDataset):
         dask_workers: int = 0,
         pre_load: bool = False,
         contrast_adjust: bool = True,
-        include_raw: bool = True,
+        raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
+        label_representation: LabelRepresentation = LabelRepresentation.BINARY,
+        random_crop: bool = True,
     ):
         cellmap_datasets = []
         if annotation_paths is None:
@@ -209,7 +227,9 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     dask_workers=dask_workers,
                     pre_load=pre_load,
                     contrast_adjust=contrast_adjust,
-                    include_raw=include_raw,
+                    raw_channel=raw_channel,
+                    label_representation=label_representation,
+                    random_crop=random_crop,
                 )
             )
         super().__init__(cellmap_datasets)
@@ -225,15 +245,18 @@ class CellMapDataset3Das2D(ConcatDataset):
         *,
         augment_horizontal_flip: bool = True,
         augment_vertical_flip: bool = True,
-        allow_single_class_crops: Sequence[str | None]
-        | None = None,  # only has an effect if crop_list is not specified
+        allow_single_class_crops: (
+            Sequence[str | None] | None
+        ) = None,  # only has an effect if crop_list is not specified
         annotation_path: str | None = None,
         crop_list: Sequence[str] | None = None,
         raw_dataset: str | None = "volumes/raw",
         dask_workers=0,
         pre_load=False,
         contrast_adjust=True,
-        include_raw=True,
+        raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
+        label_representation: LabelRepresentation = LabelRepresentation.BINARY,
+        random_crop: bool = True,
     ) -> None:
         self.pre_load = pre_load
         self.contrast_adjust = contrast_adjust
@@ -246,7 +269,9 @@ class CellMapDataset3Das2D(ConcatDataset):
         self.augment_horizontal_flip = augment_horizontal_flip
         self.augment_vertical_flip = augment_vertical_flip
         self.dask_workers = dask_workers
-        self.include_raw = include_raw
+        self.raw_channel = raw_channel
+        self.label_representation = label_representation
+        self.random_crop = random_crop
         self._raw_xarray: xr.DataArray | None = None
         if annotation_path is None:
             self.annotation_path = data_path
@@ -263,7 +288,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         super().__init__(self.crops)
         self.transform = T.Compose(
             [
-                T.ToTensor(),
+                T.ToImage(),
                 T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
             ]
@@ -287,7 +312,8 @@ class CellMapDataset3Das2D(ConcatDataset):
                         dask_workers=self.dask_workers,
                         pre_load=self.pre_load,
                         contrast_adjust=self.contrast_adjust,
-                        include_raw=self.include_raw,
+                        raw_channel=self.raw_channel,
+                        label_representation=self.label_representation,
                     )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
@@ -326,7 +352,9 @@ class CellMapDataset3Das2D(ConcatDataset):
                     dask_workers=self.dask_workers,
                     pre_load=self.pre_load,
                     contrast_adjust=self.contrast_adjust,
-                    include_raw=self.include_raw,
+                    raw_channel=self.raw_channel,
+                    label_representation=self.label_representation,
+                    random_crop=self.random_crop,
                 )
                 for crop_name in crop_list
             ]
@@ -371,6 +399,15 @@ class CellMapDataset3Das2D(ConcatDataset):
         return self._raw_scale
 
     def __getitem__(self, idx: int) -> Tensor:
+        # img = super().__getitem__(idx)
+        # if isinstance(img, tuple):
+        #     img_tensor = []
+        #     for im in img:
+        #         img_tensor.append(totensor(im))
+        #     img_tensor = tuple(img_tensor)
+        # else:
+        #     img_tensor = totensor(img)
+        # return self.transform(img_tensor)
         return self.transform(super().__getitem__(idx))
 
     #     for name, dtarr in cls_msarr.children.items():
@@ -392,7 +429,9 @@ class AnnotationCrop3Das2D(Dataset):
         dask_workers: int = 0,
         pre_load=False,
         contrast_adjust=True,
-        include_raw=True,
+        raw_channel: RawChannelOptions = "APPEND",
+        label_representation: LabelRepresentation = "BINARY",
+        random_crop: bool = True,
     ):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
@@ -409,12 +448,15 @@ class AnnotationCrop3Das2D(Dataset):
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str, xr.DataArray] = dict()
         self._raw_xarray = None
+        self._class_ids_xarray = None
         self.dask_workers = dask_workers
         self.pre_load = pre_load
         self.contrast_adjust = contrast_adjust
         self._contrast_min = None
         self._contrast_max = None
-        self.include_raw = include_raw
+        self.raw_channel = raw_channel
+        self.label_representation = label_representation
+        self.random_crop = random_crop
 
     @property
     def raw_xarray(self):
@@ -545,14 +587,38 @@ class AnnotationCrop3Das2D(Dataset):
 
     def class_xarray(self, cls_name: str) -> xr.DataArray:
         if cls_name not in self._class_xarray:
-            if cls_name not in self.annotated_classes:
+            if cls_name == "background" and "background" not in self.annotated_classes:
+                arrs = []
+                for cls_iter in self.parent_data.class_list:
+                    cls_arr = self.class_xarray(cls_iter)
+                    arrs.append(cls_arr)
+                self._class_xarray[cls_name] = xr.ones_like(arrs[-1]) - np.sum(arrs, axis=0)
+            elif cls_name not in self.annotated_classes:
                 msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
                 raise ValueError(msg)
-            full_path = os.path.join(self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name])
-            self._class_xarray[cls_name] = read_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
+            else:
+                full_path = os.path.join(
+                    self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name]
+                )
+                self._class_xarray[cls_name] = read_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
             # if self.pre_load:
             #    self._class_xarray[cls_name] = self._class_xarray[cls_name].compute(workers=self.dask_workers)
         return self._class_xarray[cls_name]
+
+    @property
+    def class_ids_xarray(self):
+        if self._class_ids_xarray is None:
+            arrs = []
+            for cls_name in self.parent_data.class_list:
+                cls_arr = self.class_xarray(cls_name)
+                arrs.append(cls_arr)
+            arrs = [xr.zeros_like(arrs[0]), *arrs]
+            class_ids_arr = xr.concat(arrs, dim="class").argmax(axis=0)
+            if self.pre_load:
+                self._class_ids_xarray = class_ids_arr.compute(workers=self.dask_workers)
+            else:
+                self._class_ids_xarray = class_ids_arr
+        return self._class_ids_xarray
 
     def get_counts(self, cls_name: str) -> Mapping[str, int]:
         return get_nested_attr(self.get_class_array(cls_name).attrs, ["cellmap", "annotation", "complement_counts"])
@@ -587,42 +653,125 @@ class AnnotationCrop3Das2D(Dataset):
             return counts["unknown"] == 0
 
     def __len__(self):
-        return self.sizes["z"]
+        if self.random_crop:
+            return self.sizes["z"]
+        else:
+            return np.prod(
+                (
+                    self.sizes["z"],
+                    int(np.ceil(self.sizes["x"] / self.parent_data.image_size)),
+                    int(np.ceil(self.sizes["y"] / self.parent_data.image_size)),
+                )
+            )
 
     def __getitem__(self, idx: int) -> np.ndarray:
-        x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.image_size + 1)
-        y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.image_size + 1)
-        vox_slice = {
-            "z": idx,
-            "x": slice(x_start, x_start + self.parent_data.image_size),
-            "y": slice(y_start, y_start + self.parent_data.image_size),
-        }
-        arrs = []
-        for cls_name in self.parent_data.class_list:
-            cls_arr = self.class_xarray(cls_name).isel(vox_slice)
-            arrs.append(cls_arr.astype('float32'))
-        spatial_slice = {
-            dim: slice(
-                int(cls_arr.coords[dim][0])
-                - self.parent_data.scale[dim] / 2,  # hack to deal with misalignment/wrong offsets
-                int(cls_arr.coords[dim][-1]) + self.parent_data.scale[dim] / 2,
+        if self.random_crop:
+            x_start = np.random.randint(0, self.sizes["x"] - self.parent_data.image_size + 1)
+            y_start = np.random.randint(0, self.sizes["y"] - self.parent_data.image_size + 1)
+            vox_slice = {
+                "z": idx,
+                "x": slice(x_start, x_start + self.parent_data.image_size),
+                "y": slice(y_start, y_start + self.parent_data.image_size),
+            }
+        else:
+            idx_tuple = np.unravel_index(
+                idx,
+                (
+                    self.sizes["z"],
+                    int(np.ceil(self.sizes["y"] / self.parent_data.image_size)),
+                    int(np.ceil(self.sizes["x"] / self.parent_data.image_size)),
+                ),
             )
-            for dim in "xy"
-        }
-        spatial_slice["z"] = slice(
-            int(cls_arr.coords["z"]) - self.parent_data.scale["z"] / 2,
-            int(cls_arr.coords["z"]) + self.parent_data.scale["z"] / 2,
-        )
-        if self.include_raw:
+            vox_slice = {
+                "z": idx_tuple[0],
+                "y": slice(
+                    idx_tuple[1] * self.parent_data.image_size, (idx_tuple[1] + 1) * self.parent_data.image_size
+                ),
+                "x": slice(
+                    idx_tuple[2] * self.parent_data.image_size, (idx_tuple[2] + 1) * self.parent_data.image_size
+                ),
+            }
+
+        arrs: list[xr.DataArray]
+        if self.label_representation == LabelRepresentation.CLASS_IDS:
+            arrs = [self.class_ids_xarray.isel(vox_slice)]
+        else:
+            arrs = []
+            if self.label_representation == LabelRepresentation.ONE_HOT:
+                bg_arr = self.class_xarray("background").isel(vox_slice)
+                arrs.append(bg_arr.astype("float32"))
+            for cls_name in self.parent_data.class_list:
+                cls_arr = self.class_xarray(cls_name).isel(vox_slice)
+                arrs.append(cls_arr.astype("float32"))
+
+        if self.raw_channel == RawChannelOptions.EXCLUDE:
+            for k, arr in enumerate(arrs):
+                if arr.sizes["x"] < self.parent_data.image_size or arr.sizes["y"] < self.parent_data.image_size:
+                    arrs[k] = arr.pad(
+                        pad_with={
+                            "x": (0, self.parent_data.image_size - arr.sizes["x"]),
+                            "y": (0, self.parent_data.image_size - arr.sizes["y"]),
+                        }
+                    )
+
+            res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+        else:
+            spatial_slice = {
+                dim: slice(
+                    int(arrs[-1].coords[dim][0])
+                    - self.parent_data.scale[dim] / 2,  # hack to deal with misalignment/wrong offsets
+                    int(arrs[-1].coords[dim][-1]) + self.parent_data.scale[dim] / 2,
+                )
+                for dim in "xy"
+            }
+            spatial_slice["z"] = slice(
+                int(arrs[-1].coords["z"]) - self.parent_data.scale["z"] / 2,
+                int(arrs[-1].coords["z"]) + self.parent_data.scale["z"] / 2,
+            )
             raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32')
             if self.contrast_adjust:
                 raw_arr = (raw_arr - self.contrast_min) / (self.contrast_max - self.contrast_min)
             else:
                 raw_arr = raw_arr / 255.0
-            arrs.append(raw_arr)
-        patch = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
-
-        return patch  # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
+            raw_arr = (raw_arr * 2.0) - 1.0
+            for k, arr in enumerate(arrs):
+                if arr.sizes["x"] < self.parent_data.image_size or arr.sizes["y"] < self.parent_data.image_size:
+                    arrs[k] = np.pad(arr.data, pad_width=[
+                        (0, self.parent_data.image_size - arr.data.shape[0]), 
+                         (0, self.parent_data.image_size - arr.data.shape[1])])
+                else:
+                    arrs[k] = arr.data
+                                     
+            if raw_arr.shape[0] < self.parent_data.image_size or raw_arr.shape[1] < self.parent_data.image_size:
+                raw_arr = np.pad(
+                    raw_arr,
+                    [
+                        (0, self.parent_data.image_size - raw_arr.shape[0]),
+                        (0, self.parent_data.image_size - raw_arr.shape[1]),
+                    ],
+                )
+            if self.raw_channel == RawChannelOptions.APPEND:
+                arrs.append(raw_arr)
+                res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+            elif self.raw_channel == RawChannelOptions.PREPEND:
+                arrs = [raw_arr, *arrs]
+                res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+            elif self.raw_channel == RawChannelOptions.FIRST:
+                res = (
+                    np.expand_dims(raw_arr.data, -1),
+                    dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
+                )
+            elif self.raw_channel == RawChannelOptions.SECOND:
+                res = (
+                    dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
+                    np.expand_dims(raw_arr.data, -1),
+                )
+            else:
+                msg = f"Unknown option for handling raw channel: {self.raw_channel}"
+                raise ValueError(msg)
+        return (
+            res  # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
+        )
 
 
 if __name__ == "__main__":

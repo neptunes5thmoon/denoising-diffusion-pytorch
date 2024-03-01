@@ -7,6 +7,8 @@ from denoising_diffusion_pytorch.datasets import (
     CellMapDatasets3Das2D,
     SimpleDataset,
     ZarrDataset,
+    RawChannelOptions,
+    LabelRepresentation,
 )
 from denoising_diffusion_pytorch.denoising_diffusion import (
     GaussianDiffusion,
