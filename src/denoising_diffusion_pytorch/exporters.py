@@ -122,7 +122,7 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
     return rgb_image
 
 
-class PostProcessOptions(Enum):
+class ProcessOptions(Enum):
     TO_UINT8 = partial(to_dtype, dtype=torch.uint8)
     ADJUST_RANGE_0_1_TO_0_255 = partial(adjust_range, range_in=(0,1), range_out=(0, 255))
     ADJUST_RANGE_NEG1_1_TO_0_255 = partial(adjust_range, range_in=(-1,1), range_out=(0,255))
@@ -135,7 +135,7 @@ class PostProcessOptions(Enum):
         return self.value(*args, **kwargs)
 
 
-PostProcessOptionsNames = Literal[tuple(e.name for e in PostProcessOptions)]
+ProcessOptionsNames = Literal[tuple(e.name for e in ProcessOptions)]
 
 
 class SampleExporter(object):
@@ -199,11 +199,11 @@ class SampleExporter(object):
                 raise ValueError(msg)
             for img_name, (channel_slice, preprocessfuncs) in self.channel_assignment.items():
                 img_data = sample[:, slice(*channel_slice), ...]
-                for func_option in preprocessfuncs:
+                for func_option in processfuncs:
                     if func_option is not None:
-                        func_option = PostProcessOptions[func_option]
-                        if func_option == PostProcessOptions.COLORIZE:
-                            img_data = func_option(img_data, colors=self.colors, color_threshold=self.color_threshold)
+                        func_option = ProcessOptions[func_option]
+                        if func_option == ProcessOptions.COLORIZE:
+                            img_data = func_option(img_data, colors=self.colors, color_threshold=self.threshold)
                         else:
                             img_data = func_option(img_data)
                 if self.file_format == ".zarr":
