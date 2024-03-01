@@ -9,7 +9,7 @@ import torch
 import zarr
 from PIL import Image
 from torchvision import utils
-
+import distinctipy
 logger = logging.getLogger(__name__)
 
 
@@ -56,8 +56,9 @@ def convert_color_to_float(
         raise TypeError(msg)
 
 
-def adjust_range(img: torch.Tensor, values=(0, 255)) -> torch.Tensor:
-    return img.mul(values[1]).clamp_(values[0], values[1])
+def adjust_range(img: torch.Tensor, range_in=(-1, 1), range_out=(0,255)) -> torch.Tensor:
+    img = (img - range_in[0])/(range_in[1]-range_in[0]) * (range_out[1]- range_out[0]) + range_out[0]
+    return img.clamp_(range_out[0], range_out[1])
 
 
 def to_numpy(img: torch.Tensor) -> np.array:
@@ -92,6 +93,9 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
         color_axis = 1
     elif img.ndim == 3:  # ch, x, y
         color_axis = 0
+    else:
+        msg = f"Can't handle arrays with {img.ndim} dimensions for colorizing"
+        raise ValueError(msg)
     if colors is None or len(colors) < img.shape[color_axis]:
         new_colors = distinctipy.get_colors(img.shape[color_axis], colors=colors)
         if colors is None:
@@ -120,7 +124,8 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
 
 class PostProcessOptions(Enum):
     TO_UINT8 = partial(to_dtype, dtype=torch.uint8)
-    ADJUST_RANGE_0_255 = partial(adjust_range, values=(0, 255))
+    ADJUST_RANGE_0_1_TO_0_255 = partial(adjust_range, range_in=(0,1), range_out=(0, 255))
+    ADJUST_RANGE_NEG1_1_TO_0_255 = partial(adjust_range, range_in=(-1,1), range_out=(0,255))
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
