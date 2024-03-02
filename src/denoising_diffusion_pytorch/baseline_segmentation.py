@@ -139,7 +139,7 @@ class BaselineSegmentationTrainer:
                 self.validation_ds,
                 batch_size=validation_batch_size,
                 shuffle=False,
-                num_workers=dataloader_nworkers,
+                num_workers=max(1,dataloader_nworkers/10),
                 persistent_workers=False,
             )
             self.val_dl = self.accelerator.prepare(val_dl)
@@ -275,7 +275,8 @@ class BaselineSegmentationTrainer:
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         # self.ema.ema_model.eval()
-                        milestone = self.step // self.save_and_sample_every
+                        milestone = self.step // self.save_and_sample_every                        
+                        self.save(milestone)
                         if self.val_dl is not None:
                             self.model.inference_model.eval()
                             
@@ -300,47 +301,7 @@ class BaselineSegmentationTrainer:
                                     )
                                 
                             self.model.model.train()
-                            
-
-                        # with torch.inference_mode():
-                        #     batches = num_to_groups(self.num_samples, self.batch_size)
-                        #     all_images_list = list(
-                        #         map(
-                        #             lambda n: self.ema.ema_model.sample(batch_size=n),
-                        #             batches,
-                        #         )
-                        #     )
-
-                        # all_images = torch.cat(all_images_list, dim=0)
-                        # if self.channels <= 3:
-                        #     utils.save_image(
-                        #         all_images,
-                        #         str(self.results_folder / f"sample-{milestone}.png"),
-                        #         nrow=int(math.sqrt(self.num_samples)),
-                        #     )
-                        # else:
-                        #     self.inference_saver.save_sample(
-                        #         str(self.results_folder / f"ckpt_{milestone}"),
-                        #         all_images,
-                        #         [f"t{self.sampling_timesteps + 1}"],
-                        #     )
-
-                        # whether to calculate fid
-                        # if self.calculate_fid:
-                        #     if self.channels <= 3:
-                        #         fid_score = self.fid_scorer.fid_score()
-                        #         accelerator.print(f"fid_score: {fid_score}")
-                        #     else:
-                        #         raise ValueError("FID score cannot be calculated for data with more than 3 channels.")
-
-                        # if self.save_best_and_latest_only:
-                        #     if self.best_fid > fid_score:
-                        #         self.best_fid = fid_score
-                        #         self.save("best")
-                        #     self.save("latest")
-                        # else:
-                        self.save(milestone)
-
+                        
                 pbar.update(1)
 
         accelerator.print("training complete")
