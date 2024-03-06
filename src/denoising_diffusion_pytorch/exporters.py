@@ -88,7 +88,7 @@ def griddify(img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.nda
     return img
 
 
-def make_labels(img: np.array, label_threshold=0):
+def make_labels(img: np.array, label_threshold=0, add_bg=True):
     if img.ndim == 4:  # s, ch, x, y
         label_axis = 1
     elif img.ndim == 3:  # ch, x, y
@@ -97,6 +97,10 @@ def make_labels(img: np.array, label_threshold=0):
         msg = f"Can't handle arrays with {img.ndim} dimensions for making labels"
         raise ValueError(msg)
     img[img <= label_threshold] = 0
+    if add_bg:
+        shape = list(img.shape)
+        shape[label_axis] = 1
+        img = np.concatenate([np.zeros_like(img, shape=shape), img], axis=label_axis)
     max_lbl_id_arr = np.argmax(img, axis=label_axis, keepdims=True)
     return max_lbl_id_arr
 
@@ -166,7 +170,8 @@ class ProcessOptions(Enum):
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
-    MAKE_LABELS = partial(make_labels)
+    MAKE_LABELS_WITH_ADDED_BG = partial(make_labels, add_bg=True)
+    MAKE_LABELS = partial(make_labels, add_bg=False)
     RGB_LABELS = partial(rgb_labels)
     COLORIZE = partial(colorize)
 
@@ -247,7 +252,7 @@ class SampleExporter(object):
                             img_data = func_option(img_data, colors=self.colors, color_threshold=self.threshold)
                         elif func_option == ProcessOptions.RGB_LABELS:
                             img_data = func_option(img_data, colors=self.colors)
-                        elif func_option == ProcessOptions.MAKE_LABELS:
+                        elif func_option == ProcessOptions.MAKE_LABELS or func_option == ProcessOptions.MAKE_LABELS_WITH_ADDED_BG:
                             img_data = func_option(img_data, label_threshold=self.threshold)
                         else:
                             img_data = func_option(img_data)
