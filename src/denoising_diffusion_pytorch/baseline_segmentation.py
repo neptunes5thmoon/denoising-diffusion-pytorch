@@ -66,7 +66,7 @@ class BaselineSegmentationPredictor:
         batch_size=16,
         criteria=None,
         results_folder="./results",
-        dataloder_nworkers=cpu_count(),
+        dataloader_nworkers=cpu_count(),
         amp=False,
         split_batches=True,
         mixed_precision_type="fp16",
@@ -87,8 +87,8 @@ class BaselineSegmentationPredictor:
             self.ds,
             batch_size=batch_size,
             shuffle=False,
-            pin_memorey=True,
-            num_workers=dataloder_nworkers
+            pin_memory=True,
+            num_workers=dataloader_nworkers
         )
         self.dl = self.accelerator.prepare(dl)
         self.criteria=dict()
@@ -143,7 +143,7 @@ class BaselineSegmentationPredictor:
                 for data in self.dl:
                     prediction = self.model.inference_model(data)
                     all_predictions = accelerator.gather(prediction)
-                self.exporter.save_sample(
+                    self.exporter.save_sample(
                     str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"),
                     all_predictions
                 )
