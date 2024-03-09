@@ -92,7 +92,7 @@ class SimpleDataset(Dataset):
         self.transform = T.Compose(
             [
                 T.Lambda(maybe_convert_fn),
-                T.RandomCrop(image_size, padding=0),
+                T.RandomCrop(image_size, padding=0) if image_size is not None else nn.Identity(),
                 T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
                 T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
                 T.ToTensor(),
