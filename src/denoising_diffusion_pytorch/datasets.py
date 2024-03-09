@@ -108,7 +108,7 @@ class SimpleDataset(Dataset):
         else:
             path = self.paths[index]
             img = Image.open(path)
-        return self.transform(img)
+        return self.transform(img) * 2. - 1.
 
 
 class ZarrDataset(Dataset):
