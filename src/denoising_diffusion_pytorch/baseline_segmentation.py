@@ -56,6 +56,7 @@ class BaselineSegmentation(nn.Module):
         model_out = self.model(img)
         return self.loss_fn(model_out, torch.squeeze(target), *args, **kwargs)
 
+
 class BaselineSegmentationPredictor:
     def __init__(
         self,
@@ -71,6 +72,7 @@ class BaselineSegmentationPredictor:
         split_batches=True,
         mixed_precision_type="fp16",
         milestone=None,
+        include_input=True,
     ):
         self.accelerator = Accelerator(
             split_batches=split_batches,
@@ -80,6 +82,7 @@ class BaselineSegmentationPredictor:
         self.model = segmentation_model
         self.batch_size = batch_size
         self.ds = dataset
+        self.include_input = include_input
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok=True)
         self.model = self.accelerator.prepare(self.model)
@@ -139,9 +142,15 @@ class BaselineSegmentationPredictor:
                 for data in self.dl:
                     prediction = self.model.inference_model(data)
                     all_predictions = accelerator.gather(prediction)
+                    if self.include_input:
+                        all_data = accelerator.gather(data)
+                        torch_arr = torch.cat([all_data, all_predictions], axis=1)
+                    else:
+                        torch_arr = all_predictions
                     self.exporter.save_sample(
-                        str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"), all_predictions
+                        str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"), torch_arr
                     )
+                    
         return all_predictions
 
 
