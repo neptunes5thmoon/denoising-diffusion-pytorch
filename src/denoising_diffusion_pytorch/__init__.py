@@ -2,10 +2,11 @@ from denoising_diffusion_pytorch.architecture import Unet
 from denoising_diffusion_pytorch.baseline_segmentation import (
     BaselineSegmentation,
     BaselineSegmentationTrainer,
+    BaselineSegmentationPredictor,
+    SegmentationActivation,
+    SegmentationActivationNames,
     SegmentationMetrics,
     SegmentationMetricsNames,
-    SegmentationActivation,
-    SegmentationActivationNames
 )
 from denoising_diffusion_pytorch.continuous_time_gaussian_diffusion import (
     ContinuousTimeGaussianDiffusion,

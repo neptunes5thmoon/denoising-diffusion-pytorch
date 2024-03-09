@@ -70,7 +70,7 @@ class BaselineSegmentationPredictor:
         amp=False,
         split_batches=True,
         mixed_precision_type="fp16",
-        milestone=None
+        milestone=None,
     ):
         self.accelerator = Accelerator(
             split_batches=split_batches,
@@ -83,15 +83,9 @@ class BaselineSegmentationPredictor:
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok=True)
         self.model = self.accelerator.prepare(self.model)
-        dl = DataLoader(
-            self.ds,
-            batch_size=batch_size,
-            shuffle=False,
-            pin_memory=True,
-            num_workers=dataloader_nworkers
-        )
+        dl = DataLoader(self.ds, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=dataloader_nworkers)
         self.dl = self.accelerator.prepare(dl)
-        self.criteria=dict()
+        self.criteria = dict()
         if criteria is not None:
             for criterion_name in criteria:
                 self.criteria[criterion_name] = SegmentationMetrics[criterion_name]
@@ -101,9 +95,11 @@ class BaselineSegmentationPredictor:
             self.load_last()
         else:
             self.load(milestone)
+
     @property
     def device(self):
         return self.accelerator.device
+
     def load(self, milestone):
         accelerator = self.accelerator
         device = accelerator.device
@@ -121,7 +117,6 @@ class BaselineSegmentationPredictor:
         model.load_state_dict(data["model"])
 
         self.milestone = data["step"]
-        self.opt.load_state_dict(data["opt"])
         # if self.accelerator.is_main_process:
         # self.ema.load_state_dict(data["ema"])
 
@@ -130,6 +125,7 @@ class BaselineSegmentationPredictor:
 
         if exists(self.accelerator.scaler) and exists(data["scaler"]):
             self.accelerator.scaler.load_state_dict(data["scaler"])
+
     def load_last(self):
         milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
         if len(milestones) > 0:
@@ -144,9 +140,8 @@ class BaselineSegmentationPredictor:
                     prediction = self.model.inference_model(data)
                     all_predictions = accelerator.gather(prediction)
                     self.exporter.save_sample(
-                    str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"),
-                    all_predictions
-                )
+                        str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"), all_predictions
+                    )
         return all_predictions
 
 
