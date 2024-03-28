@@ -722,6 +722,14 @@ class Trainer(object):
         device = accelerator.device
 
         self.load_last()
+        
+        if self.val_dl is not None:
+            for data, target in self.val_dl:
+                all_data = accelerator.gather(data)
+                all_target = accelerator.gather(target)
+                self.loader_exporter.save_sample(
+                    str(self.results_folder / "reference"), torch.cat([all_data, all_target], dim=1)
+                )
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,
