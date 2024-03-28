@@ -679,11 +679,10 @@ class Trainer(object):
             "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
-        model_path = str(
-            self.results_folder
-            / f"ckpt_{milestone:0{self.milestone_digits}d}"
-            / f"model_{milestone:0{self.milestone_digits}d}.pt"
-        )
+        
+        ckpt_dir = self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"
+        ckpt_dir.mkdir(exist_ok=True)
+        model_path = str(ckpt_dir / f"model_{milestone:0{self.milestone_digits}d}.pt")
         torch.save(data, model_path)
 
     def load_last(self):
