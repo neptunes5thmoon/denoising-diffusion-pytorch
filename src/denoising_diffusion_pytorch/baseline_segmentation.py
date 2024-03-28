@@ -1,19 +1,21 @@
+import math
+import os
+from enum import Enum
+from functools import partial
+from multiprocessing import cpu_count
+from pathlib import Path
+from typing import Literal
+
+import mlflow
 import torch
 from accelerate import Accelerator
 from torch import nn
-from multiprocessing import cpu_count
-from torch.utils.data import DataLoader
-import mlflow
-from tqdm.auto import tqdm
 from torch.optim import Adam
-from pathlib import Path
-from denoising_diffusion_pytorch.convenience import exists, cycle, divisible_by
-import os
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
+from denoising_diffusion_pytorch.convenience import cycle, divisible_by, exists
 from denoising_diffusion_pytorch.version import __version__
-import math
-from enum import Enum
-from functools import partial
-from typing import Literal
 
 
 class SegmentationMetrics(Enum):
@@ -22,23 +24,28 @@ class SegmentationMetrics(Enum):
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)
 
+
 class SegmentationActivation(Enum):
     SOFTMAX = partial(nn.Softmax(dim=1))
+
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)
 
+
 SegmentationMetricsNames = Literal[tuple(e.name for e in SegmentationMetrics)]
 SegmentationActivationNames = Literal[tuple(e.name for e in SegmentationActivation)]
+
 
 class BaselineSegmentationInference(nn.Module):
     def __init__(self, model, activation):
         super().__init__()
         self.model = model
         self.activation = SegmentationActivation[activation]
-        
+
     def forward(self, img, *args, **kwargs):
         model_out = self.model(img)
         return self.activation(model_out, *args, **kwargs)
+
 
 class BaselineSegmentation(nn.Module):
     def __init__(self, model, image_size, loss_fn="CROSS_ENTROPY", activation=None):
@@ -348,7 +355,7 @@ class BaselineSegmentationTrainer:
                     data, target = next(self.dl)
                     # all_data = accelerator.gather(data)
                     # all_target = accelerator.gather(target)
-                    # self.loader_exporter.save_sample(str(self.results_folder / f"batch{self.step:0{self.milestone_digits}d}"), 
+                    # self.loader_exporter.save_sample(str(self.results_folder / f"batch{self.step:0{self.milestone_digits}d}"),
                     #                                  torch.cat([all_data, all_target], dim=1))
                     with self.accelerator.autocast():
                         loss = self.model(data, target)
@@ -360,7 +367,7 @@ class BaselineSegmentationTrainer:
 
                 accelerator.wait_for_everyone()
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                
+
                 self.opt.step()
                 self.opt.zero_grad()
 
@@ -372,13 +379,11 @@ class BaselineSegmentationTrainer:
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         # self.ema.ema_model.eval()
-                        milestone = self.step // self.save_and_sample_every                        
+                        milestone = self.step // self.save_and_sample_every
                         self.save(milestone)
                         if self.val_dl is not None:
                             self.model.inference_model.eval()
-                            
                             with torch.inference_mode():
-                                
                                 criterion_values = {criterion_name: 0.0 for criterion_name in self.criteria.keys()}
                                 for data, target in self.val_dl:
                                     prediction = self.model.inference_model(data)
@@ -396,9 +401,7 @@ class BaselineSegmentationTrainer:
                                     mlflow.log_metric(
                                         criterion_name, criterion_value / len(self.val_dl), step=self.step
                                     )
-                                
                             self.model.model.train()
-                        
                 pbar.update(1)
 
         accelerator.print("training complete")

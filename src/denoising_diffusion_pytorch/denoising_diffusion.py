@@ -1,4 +1,5 @@
 import math
+import os
 from collections import namedtuple
 from functools import partial
 from multiprocessing import cpu_count
@@ -9,8 +10,6 @@ import mlflow
 import torch
 import torch.nn.functional as F
 import zarr
-import os
-
 from accelerate import Accelerator
 from einops import rearrange, reduce
 from ema_pytorch import EMA

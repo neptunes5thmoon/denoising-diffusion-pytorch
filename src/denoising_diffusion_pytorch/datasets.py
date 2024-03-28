@@ -1,31 +1,29 @@
 from __future__ import annotations
 
+import logging
 import os
+from enum import Enum
 from functools import partial
+from operator import itemgetter
 from pathlib import Path
+from typing import Any, Mapping, Sequence, Union
 
-import numpy as np
-import zarr
+import dask
 import datatree
+import numpy as np
+import torch
+import xarray as xr
+import zarr
+from datatree import DataTree
 from fibsem_tools import read, read_xarray
 from fibsem_tools.io.util import ArrayLike, GroupLike
 from PIL import Image
-from torch import Tensor
-from torch import nn
-import torch
+from torch import Tensor, nn
+from torch.utils.data import ConcatDataset, Dataset
 from torchvision import utils
-from torch.utils.data import Dataset, ConcatDataset
 from torchvision.transforms import v2 as T
 
 from denoising_diffusion_pytorch.convenience import exists
-import logging
-import xarray as xr
-from datatree import DataTree
-import dask
-from typing import Any, Mapping, Union, Sequence
-from operator import itemgetter
-from enum import Enum
-
 
 logger = logging.getLogger(__name__)
 
@@ -736,12 +734,16 @@ class AnnotationCrop3Das2D(Dataset):
             raw_arr = (raw_arr * 2.0) - 1.0
             for k, arr in enumerate(arrs):
                 if arr.sizes["x"] < self.parent_data.image_size or arr.sizes["y"] < self.parent_data.image_size:
-                    arrs[k] = np.pad(arr.data, pad_width=[
-                        (0, self.parent_data.image_size - arr.data.shape[0]), 
-                         (0, self.parent_data.image_size - arr.data.shape[1])])
+                    arrs[k] = np.pad(
+                        arr.data,
+                        pad_width=[
+                            (0, self.parent_data.image_size - arr.data.shape[0]),
+                            (0, self.parent_data.image_size - arr.data.shape[1]),
+                        ],
+                    )
                 else:
                     arrs[k] = arr.data
-                                     
+
             if raw_arr.shape[0] < self.parent_data.image_size or raw_arr.shape[1] < self.parent_data.image_size:
                 raw_arr = np.pad(
                     raw_arr,
