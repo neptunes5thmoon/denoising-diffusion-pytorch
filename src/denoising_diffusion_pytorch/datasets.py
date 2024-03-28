@@ -776,6 +776,116 @@ class AnnotationCrop3Das2D(Dataset):
         )
 
 
+class BatchedZarrSamples(Dataset):
+    def __init__(
+        self,
+        zarr_path: str,
+        labels: str = "labels",
+        raw: str = "raw",
+        raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
+        **kwargs,
+        # label_representation_in: LabelRepresentation = LabelRepresentation.BINARY,
+        # label_representation_out: LabelRepresentation = LabelRepresentation.BINARY,
+    ):
+        self.zarr_path = zarr_path
+        self.zarr_file = zarr.open(self.zarr_path, "r")
+        self.digits = len(list(self.zarr_file.keys())[0])
+
+        for k in self.zarr_file.keys():
+            if self.digits != len(k):
+                msg = f"Keys of {self.zarr_path} do not have same length ({self.digits})"
+                raise ValueError(msg)
+        self.raw_channel = raw_channel
+        # self.label_representation_in = label_representation_in
+        # self.label_representation_out = label_representation_out
+        # if labels is None:
+        # self.labels = [
+        #         "ecs",
+        #         "pm",
+        #         "mito_mem",
+        #         "mito_lum",
+        #         "mito_ribo",
+        #         "golgi_mem",
+        #         "golgi_lum",
+        #         "ves_mem",
+        #         "ves_lum",
+        #         "endo_mem",
+        #         "endo_lum",
+        #         "lyso_mem",
+        #         "lyso_lum",
+        #         "ld_mem",
+        #         "ld_lum",
+        #         "er_mem",
+        #         "er_lum",
+        #         "eres_mem",
+        #         "eres_lum",
+        #         "ne_mem",
+        #         "ne_lum",
+        #         "np_out",
+        #         "np_in",
+        #         "hchrom",
+        #         "nhchrom",
+        #         "echrom",
+        #         "nechrom",
+        #         "nucpl",
+        #         "nucleo",
+        #         "mt_out",
+        #         "mt_in",
+        #     ]
+        # else:
+        self.labels = labels
+        self.raw = raw
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__} at {self.zarr_path}"
+
+    def __len__(self):
+        return len(self.zarr_file.keys()) - 1
+
+    def __getitem__(self, idx: int) -> np.ndarray:
+        sample_arr = self.zarr_file[f"{idx:0{self.digits}d}"]
+
+        arrs: list[np.ndarray] = []
+        arrs.append(np.array(sample_arr[self.labels]))
+        # if self.label_representation_out == LabelRepresentation.CLASS_IDS:
+        #     for cls_name in self.labels:
+        #         arrs.append(np.array(sample_arr[cls_name]))
+        #     arrs = [np.zeros_like(arrs[0]), *arrs]
+        #     arrs = np.concatenate(arrs, axis=0).argmax(axis=0)
+        # else:
+        #     if self.label_representation == LabelRepresentation.ONE_HOT:
+        #         if "background" not in self.labels:
+        #             bg_arrs = []
+        #             for cls_iter in self.labels:
+        #                 bg_arrs.append(np.array(sample_arr[cls_iter]))
+        #             arrs.append(np.ones_like(arrs[-1]) - np.sum(arrs, axis=0))
+        #     for cls_name in self.labels:
+        #         arrs.append(np.array(sample_arr[cls_name]))
+
+        if self.raw_channel == RawChannelOptions.EXCLUDE:
+            res = np.concatenate(arrs, axis=1)
+        else:
+            raw_arr = (np.array(sample_arr["raw"]) / 255.0).astype(np.float32)
+            raw_arr = (raw_arr * 2.0) - 1.0
+            if self.raw_channel == RawChannelOptions.APPEND:
+                arrs.append(raw_arr)
+                res = np.concatenate(arrs, axis=1)
+            elif self.raw_channel == RawChannelOptions.PREPEND:
+                arrs = [raw_arr, *arrs]
+                res = np.concatenate(arrs, axis=1)
+            elif self.raw_channel == RawChannelOptions.FIRST:
+                res = (raw_arr, np.concatenate(arrs, axis=1))
+            elif self.raw_channel == RawChannelOptions.SECOND:
+                res = (
+                    np.concatenate(arrs, axis=1),
+                    raw_arr,
+                )
+            else:
+                msg = f"Unknown option for handling raw channel: {self.raw_channel}"
+                raise ValueError(msg)
+        return res
+
+
 if __name__ == "__main__":
     data_path = "/nrs/cellmap/data/jrc_hela-2/jrc_hela-2.n5"
     annotation_path = "/nrs/cellmap/data/jrc_hela-2/staging/groundtruth.zarr"

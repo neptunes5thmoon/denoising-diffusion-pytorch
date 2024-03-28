@@ -12,6 +12,7 @@ from denoising_diffusion_pytorch.continuous_time_gaussian_diffusion import (
     ContinuousTimeGaussianDiffusion,
 )
 from denoising_diffusion_pytorch.datasets import (
+    BatchedZarrSamples,
     CellMapDataset3Das2D,
     CellMapDatasets3Das2D,
     LabelRepresentation,
