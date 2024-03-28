@@ -187,6 +187,7 @@ class BaselineSegmentationTrainer:
         persistent_workers=True,
         prefetch_factor=2,
         shuffle_dataloader=True,
+        repeat_data=True,
     ):
         super().__init__()
 
@@ -215,6 +216,8 @@ class BaselineSegmentationTrainer:
         self.gradient_accumulate_every = gradient_accumulate_every
 
         self.train_num_steps = train_num_steps
+        if not repeat_data and self.train_num_steps > len(dataset):
+            self.train_num_steps = len(dataset)
         self.image_size = segmentation_model.image_size
 
         # self.max_grad_norm = max_grad_norm
@@ -339,13 +342,7 @@ class BaselineSegmentationTrainer:
         device = accelerator.device
 
         self.load_last()
-        if self.val_dl is not None:
-            for data, target in self.val_dl:
-                all_data = accelerator.gather(data)
-                all_target = accelerator.gather(target)
-                self.loader_exporter.save_sample(
-                    str(self.results_folder / "reference"), torch.cat([all_data, all_target], dim=1)
-                )
+        self.train_num_steps = self.train_num_steps + self.step
         with tqdm(
             initial=self.step,
             total=self.train_num_steps,

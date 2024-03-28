@@ -548,6 +548,7 @@ class Trainer(object):
         persistent_workers=True,
         prefetch_factor=2,
         shuffle_dataloader=True,
+        repeat_data = True,
     ):
         super().__init__()
 
@@ -581,6 +582,8 @@ class Trainer(object):
         )
 
         self.train_num_steps = train_num_steps
+        if not repeat_data and self.train_num_steps > len(dataset):
+            self.train_num_steps = len(dataset)
         self.image_size = diffusion_model.image_size
         self.sampling_timesteps = diffusion_model.sampling_timesteps
         self.max_grad_norm = max_grad_norm
