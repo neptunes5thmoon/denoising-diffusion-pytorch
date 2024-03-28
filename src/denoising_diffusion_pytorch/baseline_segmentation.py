@@ -186,6 +186,7 @@ class BaselineSegmentationTrainer:
         dataloader_nworkers=cpu_count(),
         persistent_workers=True,
         prefetch_factor=2,
+        shuffle_dataloader=True,
     ):
         super().__init__()
 
@@ -226,34 +227,6 @@ class BaselineSegmentationTrainer:
             len(self.ds) >= 100
         ), "you should have at least 100 images in your folder. at least 10k images recommended"
 
-        dl = DataLoader(
-            self.ds,
-            batch_size=train_batch_size,
-            shuffle=True,
-            pin_memory=True,
-            num_workers=dataloader_nworkers,
-            prefetch_factor=prefetch_factor,
-            persistent_workers=persistent_workers,
-        )
-        
-        dl = self.accelerator.prepare(dl)
-        self.dl = cycle(dl)
-        if self.validation_ds is not None:
-            val_dl = DataLoader(
-                self.validation_ds,
-                batch_size=validation_batch_size,
-                shuffle=False,
-                num_workers=max(1,dataloader_nworkers/10),
-                persistent_workers=False,
-            )
-            self.val_dl = self.accelerator.prepare(val_dl)
-        else:
-            self.val_dl = None
-        self.criteria = dict()
-        if validation_criteria is not None:
-            for criterion_name in validation_criteria:
-                self.criteria[criterion_name] = SegmentationMetrics[criterion_name]
-
         # optimizer
         self.opt = Adam(segmentation_model.parameters(), lr=train_lr, betas=adam_betas)
         self.max_grad_norm = max_grad_norm
@@ -268,14 +241,43 @@ class BaselineSegmentationTrainer:
 
         # step counter state
 
-        self.step = 0
-
         # prepare model, dataloader, optimizer with accelerator
 
         self.model, self.opt = self.accelerator.prepare(self.model, self.opt)
 
         total_milestones = math.ceil(self.train_num_steps / self.save_and_sample_every)
         self.milestone_digits = len(str(total_milestones))
+
+        dl = DataLoader(
+            self.ds,
+            batch_size=train_batch_size,
+            shuffle=shuffle_dataloader,
+            pin_memory=True,
+            num_workers=dataloader_nworkers,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers,
+        )
+
+        dl = self.accelerator.prepare(dl)
+
+        self.dl = cycle(dl)
+        if self.validation_ds is not None:
+            val_dl = DataLoader(
+                self.validation_ds,
+                batch_size=validation_batch_size,
+                shuffle=False,
+                num_workers=max(1, int(dataloader_nworkers / 10)),
+                persistent_workers=False,
+            )
+            self.val_dl = self.accelerator.prepare(val_dl)
+        else:
+            self.val_dl = None
+
+        self.criteria = dict()
+        if validation_criteria is not None:
+            for criterion_name in validation_criteria:
+                self.criteria[criterion_name] = SegmentationMetrics[criterion_name]
+        self.step = 0
 
     @property
     def device(self):

@@ -547,6 +547,7 @@ class Trainer(object):
         dataloader_nworkers=cpu_count(),
         persistent_workers=True,
         prefetch_factor=2,
+        shuffle_dataloader=True,
     ):
         super().__init__()
 
@@ -595,7 +596,7 @@ class Trainer(object):
         dl = DataLoader(
             self.ds,
             batch_size=train_batch_size,
-            shuffle=True,
+            shuffle=shuffle_dataloader,
             pin_memory=True,
             num_workers=dataloader_nworkers,
             prefetch_factor=prefetch_factor,
