@@ -16,7 +16,6 @@ import xarray as xr
 import zarr
 from datatree import DataTree
 from fibsem_tools import read, read_xarray
-from fibsem_tools.io.util import ArrayLike, GroupLike
 from PIL import Image
 from torch import Tensor, nn
 from torch.utils.data import ConcatDataset, Dataset
@@ -298,7 +297,7 @@ class CellMapDataset3Das2D(ConcatDataset):
     def _get_crop_list(self, crop_list: Sequence[str] | None = None) -> list[AnnotationCrop3Das2D]:
         filtering = self.allow_single_class_crops != set(self.class_list).union({None})
         if crop_list is None:
-            sample: GroupLike = read(self.annotation_path)
+            sample = read(self.annotation_path)
             crops = []
             for ds in sample:
                 ann = read(os.path.join(self.annotation_path, ds))
@@ -434,7 +433,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
-        self.crop: GroupLike = read(os.path.join(self.annotation_path, self.crop_name))  # type: ignore
+        self.crop: = read(os.path.join(self.annotation_path, self.crop_name))
         if not has_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation"]):
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
