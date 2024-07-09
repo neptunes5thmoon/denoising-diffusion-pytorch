@@ -433,7 +433,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
-        self.crop: = read(os.path.join(self.annotation_path, self.crop_name))
+        self.crop = read(os.path.join(self.annotation_path, self.crop_name))
         if not has_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation"]):
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
