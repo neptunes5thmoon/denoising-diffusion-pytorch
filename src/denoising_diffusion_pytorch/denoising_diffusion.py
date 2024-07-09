@@ -5,7 +5,7 @@ from functools import partial
 from multiprocessing import cpu_count
 from pathlib import Path
 from random import random
-
+import numpy as np
 import mlflow
 import torch
 import torch.nn.functional as F
@@ -39,6 +39,7 @@ ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 # helpers functions
 
 
+
 def has_int_squareroot(num):
     return (math.sqrt(num) ** 2) == num
 
@@ -52,6 +53,7 @@ def num_to_groups(num, divisor):
     return arr
 
 
+
 # normalization functions
 
 
@@ -61,6 +63,7 @@ def normalize_to_neg_one_to_one(img):
 
 def unnormalize_to_zero_to_one(t):
     return (t + 1) * 0.5
+
 
 
 # gaussian diffusion trainer class
@@ -334,11 +337,24 @@ class GaussianDiffusion(nn.Module):
         return pred_img, x_start
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, return_all_timesteps=False):
+    def p_sample_loop(self, shape, return_all_timesteps=False, noise=None):
+        if shape is None:
+            if noise is None:
+                msg = "Either noise or shape need to be specified"
+                raise ValueError(msg)
+            shape = noise.shape
+        else:
+            if noise is not None and noise.shape != shape:
+                msg = f"If `noise` and `shape` are not specified, the shape of `noise` has to match `shape`. {noise.shape} != {shape}"
+                raise ValueError(msg)
+        
         batch, device = shape[0], self.device
-
-        img = torch.randn(shape, device=device)
-        imgs = [img]
+        if noise is None:
+            img = torch.randn(shape, device=device)
+        elif isinstance(noise, np.ndarray):
+            img = torch.from_numpy(noise)
+        
+        imgs = [img.to(self.device)]
 
         x_start = None
 
@@ -357,7 +373,16 @@ class GaussianDiffusion(nn.Module):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape, return_all_timesteps=False):
+    def ddim_sample(self, shape=None, return_all_timesteps=False, noise=None):
+        if shape is None:
+            if noise is None:
+                msg = "Either noise or shape need to be specified"
+                raise ValueError(msg)
+            shape = noise.shape
+        else:
+            if noise is not None and noise.shape != shape:
+                msg = "If `noise` and `shape` are specified, the shape of `noise` has to match `shape`"
+                raise ValueError(msg)
         batch, device, total_timesteps, sampling_timesteps, eta, objective = (
             shape[0],
             self.device,
@@ -372,9 +397,12 @@ class GaussianDiffusion(nn.Module):
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
-
-        img = torch.randn(shape, device=device)
-        imgs = [img]
+        if noise is None:
+            img = torch.randn(shape, device=device)
+        elif isinstance(noise, np.ndarray):
+            img = torch.from_numpy(noise)
+            
+        imgs = [img.to(device)]
 
         x_start = None
 
@@ -411,10 +439,7 @@ class GaussianDiffusion(nn.Module):
     def sample(self, batch_size=16, return_all_timesteps=False):
         image_size, channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn(
-            (batch_size, channels, image_size, image_size),
-            return_all_timesteps=return_all_timesteps,
-        )
+        return sample_fn((batch_size, channels, image_size, image_size), return_all_timesteps=return_all_timesteps, noise=noise)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t=None, lam=0.5):
@@ -514,6 +539,7 @@ class GaussianDiffusion(nn.Module):
 
         img = self.normalize(img)
         return self.p_losses(img, t, *args, **kwargs)
+
 
 
 # trainer class
