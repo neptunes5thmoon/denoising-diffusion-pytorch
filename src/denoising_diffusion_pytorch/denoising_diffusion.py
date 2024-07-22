@@ -326,16 +326,19 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
-    def p_sample(self, x, t: int, x_self_cond=None):
+    def p_sample(self, x, t: int, x_self_cond=None, noise = None):
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device=device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
             x=x, t=batched_times, x_self_cond=x_self_cond, clip_denoised=True
         )
-        noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+        if noise is None:
+            noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+        elif t == 0:
+            noise = 0.0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
-
+    
     @torch.inference_mode()
     def p_sample_loop(self, shape, return_all_timesteps=False, noise=None):
         if shape is None:
@@ -423,8 +426,8 @@ class GaussianDiffusion(nn.Module):
 
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma**2).sqrt()
-
-            noise = torch.randn_like(img)
+            if noise is None:
+                noise = torch.randn_like(img)
 
             img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
 
@@ -575,6 +578,7 @@ class Trainer(object):
         prefetch_factor=2,
         shuffle_dataloader=True,
         repeat_data = True,
+        device = None
     ):
         super().__init__()
 
@@ -583,6 +587,7 @@ class Trainer(object):
         self.accelerator = Accelerator(
             split_batches=split_batches,
             mixed_precision=mixed_precision_type if amp else "no",
+            cpu = device == "cpu"
         )
         # saver
         self.exporter = exporter
