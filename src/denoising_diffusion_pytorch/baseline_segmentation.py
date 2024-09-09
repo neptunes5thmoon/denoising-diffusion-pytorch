@@ -99,7 +99,7 @@ class BaselineSegmentationPredictor:
         if criteria is not None:
             for criterion_name in criteria:
                 self.criteria[criterion_name] = SegmentationMetrics[criterion_name]
-        milestones = [ckpt.split('_')[1] for ckpt in os.listdir(self.results_folder) if ckpt.startswith("ckpt_")]
+        milestones = [ckpt.split("_")[1] for ckpt in os.listdir(self.results_folder) if ckpt.startswith("ckpt_")]
         self.milestone_digits = len(milestones[0])
         if milestone is None:
             self.load_last()
@@ -137,7 +137,7 @@ class BaselineSegmentationPredictor:
             self.accelerator.scaler.load_state_dict(data["scaler"])
 
     def load_last(self):
-        milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
+        milestones = [int(ckpt.split("_")[1]) for ckpt in os.listdir(self.results_folder)]
         if len(milestones) > 0:
             self.load(max(milestones))
 
@@ -157,7 +157,7 @@ class BaselineSegmentationPredictor:
                     self.exporter.save_sample(
                         str(self.results_folder / f"ckpt_{self.milestone:0{self.milestone_digits}d}"), torch_arr
                     )
-                    
+
         return all_predictions
 
 
@@ -304,7 +304,7 @@ class BaselineSegmentationTrainer:
         torch.save(data, model_path)
 
     def load_last(self):
-        milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
+        milestones = [int(ckpt.split("_")[1]) for ckpt in os.listdir(self.results_folder)]
         if len(milestones) > 0:
             self.load(max(milestones))
 

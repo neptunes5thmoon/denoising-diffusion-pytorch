@@ -105,7 +105,7 @@ class SimpleDataset(Dataset):
         else:
             path = self.paths[index]
             img = Image.open(path)
-        return self.transform(img) * 2. - 1.
+        return self.transform(img) * 2.0 - 1.0
 
 
 class ZarrDataset(Dataset):
@@ -392,7 +392,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                 if voxel_size != self.scale:
                     msg = f"{arr_path} has scale {voxel_size}, asked for scale {self.scale}"
                     raise ValueError(msg)
-                self._raw_scale = ''
+                self._raw_scale = ""
         return self._raw_scale
 
     def __getitem__(self, idx: int) -> Tensor:
@@ -725,7 +725,7 @@ class AnnotationCrop3Das2D(Dataset):
                 int(arrs[-1].coords["z"]) - self.parent_data.scale["z"] / 2,
                 int(arrs[-1].coords["z"]) + self.parent_data.scale["z"] / 2,
             )
-            raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype('float32')
+            raw_arr = self.raw_xarray.sel(spatial_slice).squeeze().astype("float32")
             if self.contrast_adjust:
                 raw_arr = (raw_arr - self.contrast_min) / (self.contrast_max - self.contrast_min)
             else:
@@ -926,7 +926,7 @@ if __name__ == "__main__":
         64,
         {"x": 4, "y": 4, "z": 4},
         annotation_path=annotation_path,
-        crop_list=['crop1', 'crop113'],
+        crop_list=["crop1", "crop113"],
     )
     print(ds)
     print(len(ds))

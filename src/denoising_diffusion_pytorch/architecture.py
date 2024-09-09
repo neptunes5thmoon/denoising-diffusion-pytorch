@@ -3,17 +3,12 @@ from functools import partial
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, reduce
+from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
 from torch import nn
-from denoising_diffusion_pytorch.attend import Attend
 
-from denoising_diffusion_pytorch.convenience import (
-    default,
-    exists,
-    divisible_by,
-    cast_tuple,
-)
+from denoising_diffusion_pytorch.attend import Attend
+from denoising_diffusion_pytorch.convenience import cast_tuple, default, divisible_by, exists
 
 
 class Residual(nn.Module):
@@ -67,10 +62,11 @@ class WeightStandardizedConv2d(nn.Conv2d):
 class RMSNorm(nn.Module):
     def __init__(self, dim):
         super().__init__()
+        self.scale = dim**0.5
         self.g = nn.Parameter(torch.ones(1, dim, 1, 1))
 
     def forward(self, x):
-        return F.normalize(x, dim=1) * self.g * (x.shape[1] ** 0.5)
+        return F.normalize(x, dim=1) * self.g * self.scale
 
 
 # sinusoidal positional embeds
@@ -115,11 +111,12 @@ class RandomOrLearnedSinusoidalPosEmb(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim, dim_out, groups=8):
+    def __init__(self, dim, dim_out, dropout=0.0):
         super().__init__()
         self.proj = nn.Conv2d(dim, dim_out, 3, padding=1)
-        self.norm = nn.GroupNorm(groups, dim_out)
+        self.norm = RMSNorm(dim_out)
         self.act = nn.SiLU()
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, scale_shift=None):
         x = self.proj(x)
@@ -130,16 +127,16 @@ class Block(nn.Module):
             x = x * (scale + 1) + shift
 
         x = self.act(x)
-        return x
+        return self.dropout(x)
 
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
+    def __init__(self, dim, dim_out, *, time_emb_dim=None, dropout=0.0):
         super().__init__()
         self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2)) if exists(time_emb_dim) else None
 
-        self.block1 = Block(dim, dim_out, groups=groups)
-        self.block2 = Block(dim_out, dim_out, groups=groups)
+        self.block1 = Block(dim, dim_out, dropout=dropout)
+        self.block2 = Block(dim_out, dim_out)
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
@@ -157,12 +154,14 @@ class ResnetBlock(nn.Module):
 
 
 class LinearAttention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=32):
+    def __init__(self, dim, heads=4, dim_head=32, num_mem_kv=4):
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
         self.norm = RMSNorm(dim)
+
+        self.mem_kv = nn.Parameter(torch.randn(2, heads, dim_head, num_mem_kv))
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
 
         self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1), RMSNorm(dim))
@@ -172,6 +171,9 @@ class LinearAttention(nn.Module):
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv)
+
+        mk, mv = map(lambda t: repeat(t, "h c n -> b h c n", b=b), self.mem_kv)
+        k, v = map(partial(torch.cat, dim=-1), ((mk, k), (mv, v)))
 
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
@@ -186,7 +188,7 @@ class LinearAttention(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=32, flash=False):
+    def __init__(self, dim, heads=4, dim_head=32, num_mem_kv=4, flash=False):
         super().__init__()
 
         self.heads = heads
@@ -194,6 +196,7 @@ class Attention(nn.Module):
         self.norm = RMSNorm(dim)
         self.attend = Attend(flash=flash)
 
+        self.mem_kv = nn.Parameter(torch.randn(2, heads, num_mem_kv, dim_head))
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
         self.to_out = nn.Conv2d(hidden_dim, dim, 1)
 
@@ -202,6 +205,9 @@ class Attention(nn.Module):
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h (x y) c", h=self.heads), qkv)
+
+        mk, mv = map(lambda t: repeat(t, "h n d -> b h n d", b=b), self.mem_kv)
+        k, v = map(partial(torch.cat, dim=-2), ((mk, k), (mv, v)))
 
         out = self.attend(q, k, v)
         out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
@@ -220,15 +226,15 @@ class Unet(nn.Module):
         dim_mults=(1, 2, 4, 8),
         channels=3,
         self_condition=False,
-        resnet_block_groups=8,
         learned_variance=False,
         learned_sinusoidal_cond=False,
         random_fourier_features=False,
         learned_sinusoidal_dim=16,
         sinusoidal_pos_emb_theta=10000,
+        dropout=0.0,
         attn_dim_head=32,
         attn_heads=4,
-        full_attn=(False, False, False, True),
+        full_attn=None,  # defaults to full attention only for inner most layer
         flash_attn=False,
     ):
         super().__init__()
@@ -245,8 +251,6 @@ class Unet(nn.Module):
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        block_klass = partial(ResnetBlock, groups=resnet_block_groups)
-
         # time embeddings
 
         time_dim = dim * 4
@@ -261,13 +265,13 @@ class Unet(nn.Module):
             fourier_dim = dim
 
         self.time_mlp = nn.Sequential(
-            sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim),
+            sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(), nn.Linear(time_dim, time_dim)
         )
 
         # attention
+
+        if not full_attn:
+            full_attn = (*((False,) * (len(dim_mults) - 1)), True)
 
         num_stages = len(dim_mults)
         full_attn = cast_tuple(full_attn, num_stages)
@@ -276,7 +280,10 @@ class Unet(nn.Module):
 
         assert len(full_attn) == len(dim_mults)
 
+        # prepare blocks
+
         FullAttention = partial(Attention, flash=flash_attn)
+        resnet_block = partial(ResnetBlock, time_emb_dim=time_dim, dropout=dropout)
 
         # layers
 
@@ -297,8 +304,8 @@ class Unet(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                        block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+                        resnet_block(dim_in, dim_in),
+                        resnet_block(dim_in, dim_in),
                         attn_klass(dim_in, dim_head=layer_attn_dim_head, heads=layer_attn_heads),
                         Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding=1),
                     ]
@@ -306,9 +313,9 @@ class Unet(nn.Module):
             )
 
         mid_dim = dims[-1]
-        self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block1 = resnet_block(mid_dim, mid_dim)
         self.mid_attn = FullAttention(mid_dim, heads=attn_heads[-1], dim_head=attn_dim_head[-1])
-        self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block2 = resnet_block(mid_dim, mid_dim)
 
         for ind, (
             (dim_in, dim_out),
@@ -323,13 +330,9 @@ class Unet(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        attn_klass(
-                            dim_out,
-                            dim_head=layer_attn_dim_head,
-                            heads=layer_attn_heads,
-                        ),
+                        resnet_block(dim_out + dim_in, dim_out),
+                        resnet_block(dim_out + dim_in, dim_out),
+                        attn_klass(dim_out, dim_head=layer_attn_dim_head, heads=layer_attn_heads),
                         Upsample(dim_out, dim_in) if not is_last else nn.Conv2d(dim_out, dim_in, 3, padding=1),
                     ]
                 )
@@ -338,14 +341,14 @@ class Unet(nn.Module):
         default_out_dim = channels * (1 if not learned_variance else 2)
         self.out_dim = default(out_dim, default_out_dim)
 
-        self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
-        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+        self.final_res_block = resnet_block(init_dim * 2, init_dim)
+        self.final_conv = nn.Conv2d(init_dim, self.out_dim, 1)
 
     @property
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
-    def forward(self, x, time=None, x_self_cond=None):
+    def forward(self, x, time, x_self_cond=None):
         assert all(
             [divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]
         ), f"your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet"
@@ -356,10 +359,8 @@ class Unet(nn.Module):
 
         x = self.init_conv(x)
         r = x.clone()
-        if exists(time):
-            t = self.time_mlp(time)
-        else:
-            t = None
+
+        t = self.time_mlp(time)
 
         h = []
 

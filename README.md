@@ -4,7 +4,7 @@
 
 Implementation of <a href="https://arxiv.org/abs/2006.11239">Denoising Diffusion Probabilistic Model</a> in Pytorch. It is a new approach to generative modeling that may <a href="https://ajolicoeur.wordpress.com/the-new-contender-to-gans-score-matching-with-langevin-sampling/">have the potential</a> to rival GANs. It uses denoising score matching to estimate the gradient of the data distribution, followed by Langevin sampling to sample from the true distribution.
 
-This implementation was transcribed from the official Tensorflow version <a href="https://github.com/hojonathanho/diffusion">here</a>
+This implementation was inspired by the official Tensorflow version <a href="https://github.com/hojonathanho/diffusion">here</a>
 
 Youtube AI Educators - <a href="https://www.youtube.com/watch?v=W-O7AZNzbzQ">Yannic Kilcher</a> | <a href="https://www.youtube.com/watch?v=344w5h24-h8">AI Coffeebreak with Letitia</a> | <a href="https://www.youtube.com/watch?v=HoKDTa5jHvg">Outlier</a>
 
@@ -127,12 +127,13 @@ diffusion = GaussianDiffusion1D(
 )
 
 training_seq = torch.rand(64, 32, 128) # features are normalized from 0 to 1
-dataset = Dataset1D(training_seq)  # this is just an example, but you can formulate your own Dataset and pass it into the `Trainer1D` below
 
 loss = diffusion(training_seq)
 loss.backward()
 
 # Or using trainer
+
+dataset = Dataset1D(training_seq)  # this is just an example, but you can formulate your own Dataset and pass it into the `Trainer1D` below
 
 trainer = Trainer1D(
     diffusion,
@@ -330,5 +331,49 @@ You could consider adding a suitable metric to the training loop yourself after 
     author  = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
     booktitle = {Advances in Neural Information Processing Systems},
     year    = {2022}
+}
+```
+
+```bibtex
+@article{Bondarenko2023QuantizableTR,
+    title   = {Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing},
+    author  = {Yelysei Bondarenko and Markus Nagel and Tijmen Blankevoort},
+    journal = {ArXiv},
+    year    = {2023},
+    volume  = {abs/2306.12929},
+    url     = {https://api.semanticscholar.org/CorpusID:259224568}
+}
+```
+
+```bibtex
+@article{Karras2023AnalyzingAI,
+    title   = {Analyzing and Improving the Training Dynamics of Diffusion Models},
+    author  = {Tero Karras and Miika Aittala and Jaakko Lehtinen and Janne Hellsten and Timo Aila and Samuli Laine},
+    journal = {ArXiv},
+    year    = {2023},
+    volume  = {abs/2312.02696},
+    url     = {https://api.semanticscholar.org/CorpusID:265659032}
+}
+```
+
+```bibtex
+@article{Li2024ImmiscibleDA,
+    title   = {Immiscible Diffusion: Accelerating Diffusion Training with Noise Assignment},
+    author  = {Yiheng Li and Heyang Jiang and Akio Kodaira and Masayoshi Tomizuka and Kurt Keutzer and Chenfeng Xu},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2406.12303},
+    url     = {https://api.semanticscholar.org/CorpusID:270562607}
+}
+```
+
+```bibtex
+@article{Chung2024CFGMC,
+    title   = {CFG++: Manifold-constrained Classifier Free Guidance for Diffusion Models},
+    author  = {Hyungjin Chung and Jeongsol Kim and Geon Yeong Park and Hyelin Nam and Jong Chul Ye},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2406.08070},
+    url     = {https://api.semanticscholar.org/CorpusID:270391454}
 }
 ```

@@ -1,14 +1,15 @@
-import os
-from urllib.parse import urlparse, urlunparse
 import cProfile
-import mlflow
-import yaml
-from denoising_diffusion_pytorch import CellMapDatasets3Das2D
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
-import numpy as np
-import warnings
+import os
 import time
+import warnings
+from urllib.parse import urlparse, urlunparse
+
 import matplotlib.pyplot as plt
+import mlflow
+import numpy as np
+import yaml
+
+from denoising_diffusion_pytorch import CellMapDatasets3Das2D, GaussianDiffusion, Trainer, Unet
 
 warnings.filterwarnings("ignore", module="pydantic_ome_ngff")  # line104
 
@@ -226,7 +227,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("iterations", type=int)
-    parser.add_argument("--dataloader", action='store_true')
+    parser.add_argument("--dataloader", action="store_true")
     parser.add_argument("--all_data", action="store_true")
     parser.add_argument("--plot", action="store_true")
     args = parser.parse_args()

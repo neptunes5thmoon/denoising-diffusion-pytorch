@@ -1,36 +1,17 @@
-from functools import wraps
-from packaging import version
 from collections import namedtuple
+from functools import wraps
 
 import torch
-from torch import nn, einsum
 import torch.nn.functional as F
-
 from einops import rearrange
+from packaging import version
+from torch import einsum, nn
+
+from denoising_diffusion_pytorch.convenience import default, exists, once
 
 # constants
 
 AttentionConfig = namedtuple("AttentionConfig", ["enable_flash", "enable_math", "enable_mem_efficient"])
-
-# helpers
-
-
-def exists(val):
-    return val is not None
-
-
-def once(fn):
-    called = False
-
-    @wraps(fn)
-    def inner(x):
-        nonlocal called
-        if called:
-            return
-        called = True
-        return fn(x)
-
-    return inner
 
 
 print_once = once(print)
@@ -39,9 +20,10 @@ print_once = once(print)
 
 
 class Attend(nn.Module):
-    def __init__(self, dropout=0.0, flash=False):
+    def __init__(self, dropout=0.0, flash=False, scale=None):
         super().__init__()
         self.dropout = dropout
+        self.scale = scale
         self.attn_dropout = nn.Dropout(dropout)
 
         self.flash = flash
@@ -59,7 +41,9 @@ class Attend(nn.Module):
 
         device_properties = torch.cuda.get_device_properties(torch.device("cuda"))
 
-        if device_properties.major == 8 and device_properties.minor == 0:
+        device_version = version.parse(f"{device_properties.major}.{device_properties.minor}")
+
+        if device_version > version.parse("8.0"):
             print_once("A100 GPU detected, using flash attention if input tensor is on cuda")
             self.cuda_config = AttentionConfig(True, False, False)
         else:
@@ -73,6 +57,10 @@ class Attend(nn.Module):
             q.is_cuda,
             q.device,
         )
+
+        if exists(self.scale):
+            default_scale = q.shape[-1]
+            q = q * (self.scale / default_scale)
 
         q, k, v = map(lambda t: t.contiguous(), (q, k, v))
 
@@ -101,11 +89,11 @@ class Attend(nn.Module):
         if self.flash:
             return self.flash_attn(q, k, v)
 
-        scale = q.shape[-1] ** -0.5
+        scale = default(self.scale, q.shape[-1] ** -0.5)
 
         # similarity
 
-        sim = einsum(f"b h i d, b h j d -> b h i j", q, k) * scale
+        sim = einsum("b h i d, b h j d -> b h i j", q, k) * scale
 
         # attention
 
@@ -114,6 +102,6 @@ class Attend(nn.Module):
 
         # aggregate values
 
-        out = einsum(f"b h i j, b h j d -> b h i d", attn, v)
+        out = einsum("b h i j, b h j d -> b h i d", attn, v)
 
         return out

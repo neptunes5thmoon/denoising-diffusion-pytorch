@@ -9,14 +9,7 @@ from pytorch_fid.inception import InceptionV3
 from torch.nn.functional import adaptive_avg_pool2d
 from tqdm.auto import tqdm
 
-
-def num_to_groups(num, divisor):
-    groups = num // divisor
-    remainder = num % divisor
-    arr = [divisor] * groups
-    if remainder > 0:
-        arr.append(remainder)
-    return arr
+from denoising_diffusion_pytorch.convenience import num_to_groups
 
 
 class FIDEvaluation:

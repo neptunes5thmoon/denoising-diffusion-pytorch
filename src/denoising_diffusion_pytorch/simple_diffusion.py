@@ -2,39 +2,17 @@ import math
 from functools import partial, wraps
 
 import torch
-from torch import sqrt
-from torch import nn, einsum
 import torch.nn.functional as F
-from torch.special import expm1
-from torch.cuda.amp import autocast
-
-from tqdm import tqdm
-from einops import rearrange, repeat, reduce, pack, unpack
+from einops import pack, rearrange, reduce, repeat, unpack
 from einops.layers.torch import Rearrange
+from torch import einsum, nn, sqrt
+from torch.amp import autocast
+from torch.special import expm1
+from tqdm import tqdm
+
+from denoising_diffusion_pytorch.convenience import cast_tuple, default, exists, identity, is_lambda
 
 # helpers
-
-
-def exists(val):
-    return val is not None
-
-
-def identity(t):
-    return t
-
-
-def is_lambda(f):
-    return callable(f) and f.__name__ == "<lambda>"
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if is_lambda(d) else d
-
-
-def cast_tuple(t, l=1):
-    return ((t,) * l) if not isinstance(t, tuple) else t
 
 
 def append_dims(t, dims):
@@ -118,10 +96,10 @@ class LearnedSinusoidalPosEmb(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim, dim_out, groups=8):
+    def __init__(self, dim, dim_out):
         super().__init__()
         self.proj = nn.Conv2d(dim, dim_out, 3, padding=1)
-        self.norm = nn.GroupNorm(groups, dim_out)
+        self.norm = RMSNorm(dim_out, normalize_dim=1)
         self.act = nn.SiLU()
 
     def forward(self, x, scale_shift=None):
@@ -137,12 +115,12 @@ class Block(nn.Module):
 
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
+    def __init__(self, dim, dim_out, *, time_emb_dim=None):
         super().__init__()
         self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2)) if exists(time_emb_dim) else None
 
-        self.block1 = Block(dim, dim_out, groups=groups)
-        self.block2 = Block(dim_out, dim_out, groups=groups)
+        self.block1 = Block(dim, dim_out)
+        self.block2 = Block(dim_out, dim_out)
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
@@ -316,7 +294,6 @@ class UViT(nn.Module):
         attn_dim_head=32,
         attn_heads=4,
         ff_mult=4,
-        resnet_block_groups=8,
         learned_sinusoidal_dim=16,
         init_img_transform: callable = None,
         final_img_itransform: callable = None,
@@ -370,8 +347,6 @@ class UViT(nn.Module):
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        resnet_block = partial(ResnetBlock, groups=resnet_block_groups)
-
         # time embeddings
 
         time_dim = dim * 4
@@ -403,8 +378,8 @@ class UViT(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
-                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
+                        ResnetBlock(dim_in, dim_in, time_emb_dim=time_dim),
+                        ResnetBlock(dim_in, dim_in, time_emb_dim=time_dim),
                         LinearAttention(dim_in),
                         Downsample(dim_in, dim_out, factor=factor),
                     ]
@@ -430,8 +405,8 @@ class UViT(nn.Module):
                 nn.ModuleList(
                     [
                         Upsample(dim_out, dim_in, factor=factor),
-                        resnet_block(dim_in * 2, dim_in, time_emb_dim=time_dim),
-                        resnet_block(dim_in * 2, dim_in, time_emb_dim=time_dim),
+                        ResnetBlock(dim_in * 2, dim_in, time_emb_dim=time_dim),
+                        ResnetBlock(dim_in * 2, dim_in, time_emb_dim=time_dim),
                         LinearAttention(dim_in),
                     ]
                 )
@@ -440,8 +415,8 @@ class UViT(nn.Module):
         default_out_dim = input_channels
         self.out_dim = default(out_dim, default_out_dim)
 
-        self.final_res_block = resnet_block(dim * 2, dim, time_emb_dim=time_dim)
-        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+        self.final_res_block = ResnetBlock(init_dim * 2, init_dim, time_emb_dim=time_dim)
+        self.final_conv = nn.Conv2d(init_dim, self.out_dim, 1)
 
     def forward(self, x, time):
         x = self.init_img_transform(x)
@@ -685,7 +660,7 @@ class GaussianDiffusion(nn.Module):
 
     # training related functions - noise prediction
 
-    @autocast(enabled=False)
+    @autocast("cuda", enabled=False)
     def q_sample(self, x_start, times, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 

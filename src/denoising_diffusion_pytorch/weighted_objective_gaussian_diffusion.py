@@ -1,21 +1,13 @@
-import torch
 from inspect import isfunction
-from torch import nn, einsum
-from einops import rearrange
 
+import torch
+from einops import rearrange
+from torch import einsum, nn
+
+from denoising_diffusion_pytorch.convenience import default, exits
 from denoising_diffusion_pytorch.denoising_diffusion import GaussianDiffusion
 
 # helper functions
-
-
-def exists(x):
-    return x is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if isfunction(d) else d
 
 
 # some improvisation on my end

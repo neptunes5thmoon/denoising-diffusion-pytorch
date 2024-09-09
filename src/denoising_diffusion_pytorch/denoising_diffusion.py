@@ -5,8 +5,9 @@ from functools import partial
 from multiprocessing import cpu_count
 from pathlib import Path
 from random import random
-import numpy as np
+
 import mlflow
+import numpy as np
 import torch
 import torch.nn.functional as F
 import zarr
@@ -14,6 +15,7 @@ from accelerate import Accelerator
 from einops import rearrange, reduce
 from ema_pytorch import EMA
 from PIL import Image
+from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch.cuda.amp import autocast
 from torch.optim import Adam
@@ -27,7 +29,9 @@ from denoising_diffusion_pytorch.convenience import (
     default,
     divisible_by,
     exists,
+    has_int_squareroot,
     identity,
+    num_to_groups,
 )
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.version import __version__
@@ -35,23 +39,6 @@ from denoising_diffusion_pytorch.version import __version__
 # constants
 
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
-
-# helpers functions
-
-
-
-def has_int_squareroot(num):
-    return (math.sqrt(num) ** 2) == num
-
-
-def num_to_groups(num, divisor):
-    groups = num // divisor
-    remainder = num % divisor
-    arr = [divisor] * groups
-    if remainder > 0:
-        arr.append(remainder)
-    return arr
-
 
 
 # normalization functions
@@ -63,7 +50,6 @@ def normalize_to_neg_one_to_one(img):
 
 def unnormalize_to_zero_to_one(t):
     return (t + 1) * 0.5
-
 
 
 # gaussian diffusion trainer class
@@ -130,11 +116,12 @@ class GaussianDiffusion(nn.Module):
         offset_noise_strength=0.0,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
         min_snr_loss_weight=False,  # https://arxiv.org/abs/2303.09556
         min_snr_gamma=5,
+        immiscribe=False,
         channel_weights=None,
     ):
         super().__init__()
         assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
-        assert not model.random_or_learned_sinusoidal_cond
+        assert not hasattr(model, "random_or_learned_sinusoidal_cond") or not model.random_or_learned_sinusoidal_cond
 
         self.model = model
 
@@ -217,6 +204,7 @@ class GaussianDiffusion(nn.Module):
             "posterior_mean_coef2",
             (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod),
         )
+        self.immiscible = immiscible
 
         # offset noise strength - in blogpost, they claimed 0.1 was ideal
 
@@ -326,7 +314,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
-    def p_sample(self, x, t: int, x_self_cond=None, noise = None):
+    def p_sample(self, x, t: int, x_self_cond=None, noise=None):
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device=device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
@@ -338,7 +326,7 @@ class GaussianDiffusion(nn.Module):
             noise = 0.0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
-    
+
     @torch.inference_mode()
     def p_sample_loop(self, shape, return_all_timesteps=False, noise=None):
         if shape is None:
@@ -346,17 +334,16 @@ class GaussianDiffusion(nn.Module):
                 msg = "Either noise or shape need to be specified"
                 raise ValueError(msg)
             shape = noise.shape
-        else:
-            if noise is not None and noise.shape != shape:
-                msg = f"If `noise` and `shape` are not specified, the shape of `noise` has to match `shape`. {noise.shape} != {shape}"
-                raise ValueError(msg)
-        
+        elif noise is not None and noise.shape != shape:
+            msg = f"If `noise` and `shape` are not specified, the shape of `noise` has to match `shape`. {noise.shape} != {shape}"
+            raise ValueError(msg)
+
         batch, device = shape[0], self.device
         if noise is None:
             img = torch.randn(shape, device=device)
         elif isinstance(noise, np.ndarray):
             img = torch.from_numpy(noise)
-        
+
         imgs = [img.to(self.device)]
 
         x_start = None
@@ -382,10 +369,9 @@ class GaussianDiffusion(nn.Module):
                 msg = "Either noise or shape need to be specified"
                 raise ValueError(msg)
             shape = noise.shape
-        else:
-            if noise is not None and noise.shape != shape:
-                msg = "If `noise` and `shape` are specified, the shape of `noise` has to match `shape`"
-                raise ValueError(msg)
+        elif noise is not None and noise.shape != shape:
+            msg = "If `noise` and `shape` are specified, the shape of `noise` has to match `shape`"
+            raise ValueError(msg)
         batch, device, total_timesteps, sampling_timesteps, eta, objective = (
             shape[0],
             self.device,
@@ -404,7 +390,7 @@ class GaussianDiffusion(nn.Module):
             img = torch.randn(shape, device=device)
         elif isinstance(noise, np.ndarray):
             img = torch.from_numpy(noise)
-            
+
         imgs = [img.to(device)]
 
         x_start = None
@@ -442,7 +428,9 @@ class GaussianDiffusion(nn.Module):
     def sample(self, batch_size=16, return_all_timesteps=False, noise=None):
         image_size, channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, channels, image_size, image_size), return_all_timesteps=return_all_timesteps, noise=noise)
+        return sample_fn(
+            (batch_size, channels, image_size, image_size), return_all_timesteps=return_all_timesteps, noise=noise
+        )
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t=None, lam=0.5):
@@ -464,9 +452,19 @@ class GaussianDiffusion(nn.Module):
 
         return img
 
-    @autocast(enabled=False)
+    def noise_assignment(self, x_start, noise):
+        x_start, noise = tuple(rearrange(t, "b ... -> b (...)") for t in (x_start, noise))
+        dist = torch.cdist(x_start, noise)
+        _, assign = linear_sum_assignment(dist.cpu())
+        return torch.from_numpy(assign).to(dist.device)
+
+    @autocast("cuda", enabled=False)
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
+
+        if self.immiscible:
+            assign = self.noise_assignment(x_start, noise)
+            noise = noise[assign]
 
         return (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
@@ -544,11 +542,10 @@ class GaussianDiffusion(nn.Module):
         return self.p_losses(img, t, *args, **kwargs)
 
 
-
 # trainer class
 
 
-class Trainer(object):
+class Trainer:
     def __init__(
         self,
         diffusion_model,
@@ -577,17 +574,15 @@ class Trainer(object):
         persistent_workers=True,
         prefetch_factor=2,
         shuffle_dataloader=True,
-        repeat_data = True,
-        device = None
+        repeat_data=True,
+        device=None,
     ):
         super().__init__()
 
         # accelerator
 
         self.accelerator = Accelerator(
-            split_batches=split_batches,
-            mixed_precision=mixed_precision_type if amp else "no",
-            cpu = device == "cpu"
+            split_batches=split_batches, mixed_precision=mixed_precision_type if amp else "no"
         )
         # saver
         self.exporter = exporter
@@ -609,7 +604,7 @@ class Trainer(object):
         assert (
             train_batch_size * gradient_accumulate_every
         ) >= 16, (
-            f"your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above"
+            "your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above"
         )
 
         self.train_num_steps = train_num_steps
@@ -710,14 +705,14 @@ class Trainer(object):
             "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
             "version": __version__,
         }
-        
+
         ckpt_dir = self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"
         ckpt_dir.mkdir(exist_ok=True)
         model_path = str(ckpt_dir / f"model_{milestone:0{self.milestone_digits}d}.pt")
         torch.save(data, model_path)
 
     def load_last(self):
-        milestones = [int(ckpt.split('_')[1]) for ckpt in os.listdir(self.results_folder)]
+        milestones = [int(ckpt.split("_")[1]) for ckpt in os.listdir(self.results_folder)]
         if len(milestones) > 0:
             self.load(max(milestones))
 
@@ -753,7 +748,7 @@ class Trainer(object):
         device = accelerator.device
 
         self.load_last()
-        
+
         if self.val_dl is not None:
             for data, target in self.val_dl:
                 all_data = accelerator.gather(data)

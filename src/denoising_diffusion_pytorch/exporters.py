@@ -3,16 +3,19 @@ import math
 import os
 from enum import Enum
 from functools import partial
-from typing import Sequence, Union, Tuple, Optional, Dict, Literal
+from typing import Dict, Literal, Optional, Sequence, Tuple, Union
+
+import distinctipy
 import numpy as np
 import torch
 import zarr
 from PIL import Image
 from torchvision import utils
-import distinctipy
+
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+
 
 def get_next_sample(existing: Sequence[str], digits=None):
     if len(existing) < 1:
@@ -57,8 +60,8 @@ def convert_color_to_float(
         raise TypeError(msg)
 
 
-def adjust_range(img: torch.Tensor, range_in=(-1, 1), range_out=(0,255)) -> torch.Tensor:
-    img = (img - range_in[0])/(range_in[1]-range_in[0]) * (range_out[1]- range_out[0]) + range_out[0]
+def adjust_range(img: torch.Tensor, range_in=(-1, 1), range_out=(0, 255)) -> torch.Tensor:
+    img = (img - range_in[0]) / (range_in[1] - range_in[0]) * (range_out[1] - range_out[0]) + range_out[0]
     return img.clamp_(range_out[0], range_out[1])
 
 
@@ -165,8 +168,8 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
 
 class ProcessOptions(Enum):
     TO_UINT8 = partial(to_dtype, dtype=torch.uint8)
-    ADJUST_RANGE_0_1_TO_0_255 = partial(adjust_range, range_in=(0,1), range_out=(0, 255))
-    ADJUST_RANGE_NEG1_1_TO_0_255 = partial(adjust_range, range_in=(-1,1), range_out=(0,255))
+    ADJUST_RANGE_0_1_TO_0_255 = partial(adjust_range, range_in=(0, 1), range_out=(0, 255))
+    ADJUST_RANGE_NEG1_1_TO_0_255 = partial(adjust_range, range_in=(-1, 1), range_out=(0, 255))
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
@@ -182,7 +185,7 @@ class ProcessOptions(Enum):
 ProcessOptionsNames = Literal[tuple(e.name for e in ProcessOptions)]
 
 
-class SampleExporter(object):
+class SampleExporter:
     def __init__(
         self,
         channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, ProcessOptionsNames]]]],
@@ -252,7 +255,10 @@ class SampleExporter(object):
                             img_data = func_option(img_data, colors=self.colors, color_threshold=self.threshold)
                         elif func_option == ProcessOptions.RGB_LABELS:
                             img_data = func_option(img_data, colors=self.colors)
-                        elif func_option == ProcessOptions.MAKE_LABELS or func_option == ProcessOptions.MAKE_LABELS_WITH_ADDED_BG:
+                        elif (
+                            func_option == ProcessOptions.MAKE_LABELS
+                            or func_option == ProcessOptions.MAKE_LABELS_WITH_ADDED_BG
+                        ):
                             img_data = func_option(img_data, label_threshold=self.threshold)
                         else:
                             img_data = func_option(img_data)

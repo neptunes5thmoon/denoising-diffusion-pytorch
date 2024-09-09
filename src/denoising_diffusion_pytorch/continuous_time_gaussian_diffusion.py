@@ -1,27 +1,15 @@
 import math
+
 import torch
-from torch import sqrt
-from torch import nn, einsum
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
-from torch.special import expm1
-
-from tqdm import tqdm
-from einops import rearrange, repeat, reduce
+from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
+from torch import einsum, nn, sqrt
+from torch.amp import autocast
+from torch.special import expm1
+from tqdm import tqdm
 
-# helpers
-
-
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if callable(d) else d
-
+from denoising_diffusion_pytorch.convenience import default, exists
 
 # normalization functions
 
@@ -154,7 +142,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
         elif noise_schedule == "cosine":
             self.log_snr = alpha_cosine_log_snr
         elif noise_schedule == "learned":
-            log_snr_max, log_snr_min = [beta_linear_log_snr(torch.tensor([time])).item() for time in (0.0, 1.0)]
+            log_snr_max, log_snr_min = (beta_linear_log_snr(torch.tensor([time])).item() for time in (0.0, 1.0))
 
             self.log_snr = learned_noise_schedule(
                 log_snr_max=log_snr_max,
@@ -249,7 +237,7 @@ class ContinuousTimeGaussianDiffusion(nn.Module):
 
     # training related functions - noise prediction
 
-    @autocast(enabled=False)
+    @autocast("cuda", enabled=False)
     def q_sample(self, x_start, times, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 

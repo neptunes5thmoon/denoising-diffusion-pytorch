@@ -1,24 +1,13 @@
 from math import sqrt
 from random import random
+
 import torch
-from torch import nn, einsum
 import torch.nn.functional as F
-
+from einops import rearrange, reduce, repeat
+from torch import einsum, nn
 from tqdm import tqdm
-from einops import rearrange, repeat, reduce
 
-# helpers
-
-
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if callable(d) else d
-
+from denoising_diffusion_pytorch.convenience import default, exists
 
 # tensor helpers
 

@@ -1,27 +1,15 @@
 import math
+
 import torch
-from torch import sqrt
-from torch import nn, einsum
 import torch.nn.functional as F
-from torch.special import expm1
-from torch.cuda.amp import autocast
-
-from tqdm import tqdm
-from einops import rearrange, repeat, reduce
+from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
+from torch import einsum, nn, sqrt
+from torch.amp import autocast
+from torch.special import expm1
+from tqdm import tqdm
 
-# helpers
-
-
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if callable(d) else d
-
+from denoising_diffusion_pytorch.convenience import default, exists
 
 # normalization functions
 
@@ -165,7 +153,7 @@ class VParamContinuousTimeGaussianDiffusion(nn.Module):
 
     # training related functions - noise prediction
 
-    @autocast(enabled=False)
+    @autocast("cuda", enabled=False)
     def q_sample(self, x_start, times, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 

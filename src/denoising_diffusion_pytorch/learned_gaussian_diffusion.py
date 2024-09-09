@@ -1,33 +1,20 @@
-import torch
 from collections import namedtuple
-from math import pi, sqrt, log as ln
 from inspect import isfunction
-from torch import nn, einsum
-from einops import rearrange
+from math import log as ln
+from math import pi, sqrt
 
-from denoising_diffusion_pytorch.denoising_diffusion import (
-    GaussianDiffusion,
-    extract,
-    unnormalize_to_zero_to_one,
-)
+import torch
+from einops import rearrange
+from torch import einsum, nn
+
+from denoising_diffusion_pytorch.convenience import default, exists
+from denoising_diffusion_pytorch.denoising_diffusion import GaussianDiffusion, extract, unnormalize_to_zero_to_one
 
 # constants
 
 NAT = 1.0 / ln(2)
 
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start", "pred_variance"])
-
-# helper functions
-
-
-def exists(x):
-    return x is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if isfunction(d) else d
 
 
 # tensor helpers
@@ -93,7 +80,7 @@ class LearnedGaussianDiffusion(GaussianDiffusion):
 
         self.vb_loss_weight = vb_loss_weight
 
-    def model_predictions(self, x, t, clip_x_start=False):
+    def model_predictions(self, x, t, x_self_cond=None, clip_x_start=False, rederive_pred_noise=False):
         model_output = self.model(x, t)
         model_output, pred_variance = model_output.chunk(2, dim=1)
 

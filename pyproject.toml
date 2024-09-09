@@ -25,10 +25,11 @@ classifiers = [
 dependencies = [
     "accelerate",
     "einops",
-    "ema-pytorch",
+    "ema-pytorch>=0.42",
     "numpy",
     "pillow",
     "pytorch-fid",
+    "scipy",
     "torch",
     "torchvision",
     "tqdm",
