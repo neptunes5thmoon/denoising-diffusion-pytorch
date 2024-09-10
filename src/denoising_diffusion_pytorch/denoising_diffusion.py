@@ -18,7 +18,7 @@ from more_itertools import batched
 from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torchvision import transforms as T

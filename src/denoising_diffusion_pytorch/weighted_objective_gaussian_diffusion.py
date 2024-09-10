@@ -4,7 +4,7 @@ import torch
 from einops import rearrange
 from torch import einsum, nn
 
-from denoising_diffusion_pytorch.convenience import default, exits
+from denoising_diffusion_pytorch.convenience import default, exists
 from denoising_diffusion_pytorch.denoising_diffusion import GaussianDiffusion
 
 # helper functions
