@@ -140,7 +140,6 @@ class Conv3d(Module):
         self.concat_ones_to_input = concat_ones_to_input
 
     def forward(self, x):
-
         if self.training:
             with torch.no_grad():
                 normed_weight = normalize_weight(self.weight, eps=self.eps)
@@ -580,7 +579,6 @@ class KarrasUnet3D(Module):
         for _, layer_num_blocks_per_stage, layer_downsample_type in zip(
             range(self.num_downsamples), rest_num_blocks_per_stage, downsample_types
         ):
-
             dim_out = min(dim_max, curr_dim * 2)
 
             downsample_image = layer_downsample_type in {"all", "image"}
@@ -762,7 +760,6 @@ class MPImageTransformer(Module):
             )
 
     def forward(self, x):
-
         for attn, ff in self.layers:
             x = attn(x)
             x = ff(x)
@@ -773,7 +770,6 @@ class MPImageTransformer(Module):
 # example
 
 if __name__ == "__main__":
-
     unet = KarrasUnet3D(
         frames=32,
         image_size=64,

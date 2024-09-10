@@ -639,7 +639,6 @@ class MPImageTransformer(Module):
             )
 
     def forward(self, x):
-
         for attn, ff in self.layers:
             x = attn(x)
             x = ff(x)

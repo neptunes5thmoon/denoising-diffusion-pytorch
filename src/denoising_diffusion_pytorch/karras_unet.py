@@ -139,7 +139,6 @@ class Conv2d(Module):
         self.concat_ones_to_input = concat_ones_to_input
 
     def forward(self, x):
-
         if self.training:
             with torch.no_grad():
                 normed_weight = normalize_weight(self.weight, eps=self.eps)
@@ -628,7 +627,6 @@ class MPImageTransformer(Module):
             )
 
     def forward(self, x):
-
         for attn, ff in self.layers:
             x = attn(x)
             x = ff(x)
