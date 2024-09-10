@@ -133,7 +133,7 @@ class GaussianDiffusion(nn.Module):
         offset_noise_strength=0.0,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
         min_snr_loss_weight=False,  # https://arxiv.org/abs/2303.09556
         min_snr_gamma=5,
-        immiscribe=False,
+        immiscible=False,
         channel_weights=None,
     ):
         super().__init__()
