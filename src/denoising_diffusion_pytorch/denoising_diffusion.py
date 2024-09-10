@@ -14,6 +14,7 @@ import zarr
 from accelerate import Accelerator
 from einops import rearrange, reduce
 from ema_pytorch import EMA
+from more_itertools import batched
 from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from torch import nn
@@ -39,6 +40,22 @@ from denoising_diffusion_pytorch.version import __version__
 # constants
 
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
+
+
+def gaussian_weights(width, height, var=0.01):
+    """Generates a gasian mask of weights for tile contributions"""
+    midpoint = (width - 1) / 2  # -1 because index goes from 0 to latent_width - 1
+    x_probs = [
+        np.exp(-(x - midpoint) * (x - midpoint) / (width * width) / (2 * var)) / np.sqrt(2 * np.pi * var)
+        for x in range(width)
+    ]
+    midpoint = height / 2
+    y_probs = [
+        np.exp(-(y - midpoint) * (y - midpoint) / (height * height) / (2 * var)) / np.sqrt(2 * np.pi * var)
+        for y in range(height)
+    ]
+    weights = np.outer(y_probs, x_probs)
+    return weights
 
 
 # normalization functions
@@ -325,26 +342,116 @@ class GaussianDiffusion(nn.Module):
         elif t == 0:
             noise = 0.0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+        if self.self_condition is None:
+            x_start = None
         return pred_img, x_start
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, return_all_timesteps=False, noise=None):
-        if shape is None:
-            if noise is None:
-                msg = "Either noise or shape need to be specified"
-                raise ValueError(msg)
-            shape = noise.shape
-        elif noise is not None and noise.shape != shape:
-            msg = f"If `noise` and `shape` are not specified, the shape of `noise` has to match `shape`. {noise.shape} != {shape}"
+    def blockwise_sample(self, data, noise, self_cond, block_weight, blockshape, sampling_func, t, batchsize=1):
+        if np.any(np.array(data.shape) % np.array(blockshape)):
+            msg = f"For now, the array shape ({data.shape}) needs to be multiple of the blockshape ({blockshape})."
             raise ValueError(msg)
+        splits = np.array(data.shape) / np.array(blockshape)
 
+        # Split into blocks
+        block_list = [data]
+        noise_list = [noise]
+        if self_cond is not None:
+            self_cond_list = [self_cond]
+
+        # loop over each axis to generate split along that axis
+        for axis, i in enumerate(blockshape):
+            new_block_list = []
+            new_noise_list = []
+            for el in block_list:
+                new_block_list.extend(torch.split(el, i, axis))
+            block_list = new_block_list
+            for el in noise_list:
+                new_noise_list.extend(torch.split(el, i, axis))
+            noise_list = new_noise_list
+            if self_cond is not None:
+                new_self_cond_list = []
+                for el in self_cond_list:
+                    new_self_cond_list.extend(torch.split(el, i, axis))
+                self_cond_list = new_self_cond_list
+        if self_cond is None:
+            self_cond_list = [
+                None,
+            ] * len(noise_list)
+
+        # Process blocks in batches
+        processed_blocks = []
+        processed_xstarts = []
+        for block_batch, noise_batch, cond_batch in zip(
+            batched(block_list, batchsize), batched(noise_list, batchsize), batched(self_cond_list, batchsize)
+        ):
+            # batch blocks by concatenating along batch dimension
+            batch_data = torch.cat(block_batch, axis=0)
+            batch_noise = torch.cat(noise_batch, axis=0)
+            if self.self_condition:
+                batch_cond = torch.cat(cond_batch, axis=0)
+            else:
+                batch_cond = None
+            # process each block
+            processed_batch, x_start = sampling_func(batch_data, t=t, x_self_cond=batch_cond, noise=batch_noise)
+            # weight each block
+            processed_batch = processed_batch * block_weight
+            # turn back into a list by splitting along batch dimension
+            processed_blocks.extend(torch.split(processed_batch, 1, 0))
+            # if self conditioning, do same for x, otherwise we don't need to keep track of this
+            if self.self_condition:
+                x_start = x_start * block_weight
+                processed_xstarts.extend(torch.split(x_start, 1, 0))
+            else:
+                x_start = None
+
+        # Reassemble into array
+        assembly_list = processed_blocks
+        # Glue back together what was previously split
+        for axis, i in zip(reversed(range(len(splits))), reversed(splits)):
+            new_assembly_list = []
+            for assembly in batched(assembly_list, int(i)):
+                new_assembly_list.append(torch.cat(assembly, axis))
+            assembly_list = new_assembly_list
+        assert len(assembly_list) == 1
+        assembly_list = assembly_list[0]
+        if self.self_condition:
+            x_assembly_list = processed_xstarts
+            for axis, i in zip(reversed(range(len(splits))), reversed(splits)):
+                new_assembly_list = []
+                for assembly in batched(x_assembly_list, int(i)):
+                    new_assembly_list.append(torch.cat(assembly, axis))
+                x_assembly_list = new_assembly_list
+            assert len(x_assembly_list) == 1
+            x_start = x_assembly_list[0]
+        return assembly_list, x_start
+
+    @torch.inference_mode()
+    def p_sample_loop(self, shape, return_all_timesteps=False, blockshape=None, var=0.1, n_batch_blocks=10):
         batch, device = shape[0], self.device
-        if noise is None:
-            img = torch.randn(shape, device=device)
-        elif isinstance(noise, np.ndarray):
-            img = torch.from_numpy(noise)
 
-        imgs = [img.to(self.device)]
+        # Initialize weighting of chunks if inference should be run blockwise
+        if blockshape is not None:
+            if blockshape[2] != blockshape[3]:
+                msg = "Only square block shapes are supported"
+                raise ValueError(msg)
+            if blockshape[2] % 2 != 0:
+                msg = "Only even block shapes are supported"
+                raise ValueError(msg)
+            if batch != 1:
+                n_batch_blocks = 1
+            overlap = int(blockshape[2] / 2)
+            chunk_weight = gaussian_weights(blockshape[2], blockshape[3], var=var)
+            chunk_weight_norm = chunk_weight + np.roll(chunk_weight, (overlap, overlap), (0, 1))
+            chunk_weight = chunk_weight / chunk_weight_norm
+            chunk_weight = torch.Tensor(chunk_weight).to(device)
+
+        # Initialize image as pure standard gaussian noise
+        img = torch.randn(shape, device=self.device)
+
+        # initalize list for intermediate timesteps
+        if return_all_timesteps:
+            imgs = [img]
 
         x_start = None
 
@@ -353,73 +460,128 @@ class GaussianDiffusion(nn.Module):
             desc="sampling loop time step",
             total=self.num_timesteps,
         ):
-            self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, self_cond)
-            imgs.append(img)
-
-        ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
+            if blockshape is None:  # Single-shot prediction
+                self_cond = x_start if self.self_condition else None
+                img, x_start = self.p_sample(img, t, self_cond)
+            else:
+                noise = torch.randn(shape, device=self.device)  # initalize noise
+                img1, x_start1 = self.blockwise_sample(
+                    img, noise, x_start, chunk_weight, blockshape, self.p_sample, t, batchsize=n_batch_blocks
+                )  # run inference in blocks
+                img2, x_start2 = self.blockwise_sample(
+                    torch.roll(img, (overlap, overlap), (2, 3)),
+                    torch.roll(noise, (overlap, overlap), (2, 3)),
+                    torch.roll(x_start, (overlap, overlap), (2, 3)) if x_start is not None else None,
+                    chunk_weight,
+                    blockshape,
+                    self.p_sample,
+                    t,
+                    batchsize=n_batch_blocks,
+                )  # run inference in blocks, but offset by overlap in x,y
+                img2 = torch.roll(img2, (-overlap, -overlap), (2, 3))  # undo offset by overlap in x, y
+                if self.self_condition:  # only need this if self conditioning is on
+                    x_start = x_start1 + x_start2
+                img = img1 + img2  # smooth out prediction across blocks
+            if return_all_timesteps:
+                imgs.append(img)
+        if return_all_timesteps:
+            ret = torch.stack(imgs, dim=1)
+        else:
+            ret = img
 
         ret = self.unnormalize(ret)
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape=None, return_all_timesteps=False, noise=None):
-        if shape is None:
-            if noise is None:
-                msg = "Either noise or shape need to be specified"
-                raise ValueError(msg)
-            shape = noise.shape
-        elif noise is not None and noise.shape != shape:
-            msg = "If `noise` and `shape` are specified, the shape of `noise` has to match `shape`"
-            raise ValueError(msg)
-        batch, device, total_timesteps, sampling_timesteps, eta, objective = (
-            shape[0],
-            self.device,
-            self.num_timesteps,
-            self.sampling_timesteps,
-            self.ddim_sampling_eta,
-            self.objective,
+    def ddim_sample(self, x, t: tuple[int, int], x_self_cond=None, noise=None):
+        time, time_next = t
+        batch = x.shape[0]
+        time_cond = torch.full((batch,), time, device=self.device, dtype=torch.long)
+
+        pred_noise, x_start, *_ = self.model_predictions(
+            x, time_cond, x_self_cond, clip_x_start=True, rederive_pred_noise=True
         )
+        if time_next < 0:
+            img = x_start
+        else:
+            alpha = self.alphas_cumprod[time]
+            alpha_next = self.alphas_cumprod[time_next]
+            sigma = self.ddim_sampling_eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            c = (1 - alpha_next - sigma**2).sqrt()
+            if noise is None:
+                noise = torch.randn_like(x)
+            img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
+        return img, x_start
+
+    @torch.inference_mode()
+    def ddim_sample_loop(self, shape, return_all_timesteps=False, blockshape=None, var=0.1, n_batch_blocks=10):
+        batch = shape[0]
+
+        if blockshape is not None:
+            if blockshape[2] != blockshape[3]:
+                msg = "Only square block shapes are supported"
+                raise ValueError(msg)
+            if blockshape[2] % 2 != 0:
+                msg = "Only even block shapes are supported"
+                raise ValueError(msg)
+            if batch != 1:
+                n_batch_blocks = 1
+            overlap = int(blockshape[2] / 2)
+            chunk_weight = gaussian_weights(blockshape[2], blockshape[3], var=var)
+            chunk_weight_norm = chunk_weight + np.roll(chunk_weight, (overlap, overlap), (0, 1))
+            chunk_weight = chunk_weight / chunk_weight_norm
+            chunk_weight = torch.Tensor(chunk_weight).to(self.device)
 
         times = torch.linspace(
-            -1, total_timesteps - 1, steps=sampling_timesteps + 1
+            -1, self.num_timesteps - 1, steps=self.sampling_timesteps + 1
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
-        if noise is None:
-            img = torch.randn(shape, device=device)
-        elif isinstance(noise, np.ndarray):
-            img = torch.from_numpy(noise)
 
-        imgs = [img.to(device)]
+        img = torch.randn(shape, device=self.device)
+
+        if return_all_timesteps:
+            imgs = [img]
 
         x_start = None
 
         for time, time_next in tqdm(time_pairs, desc="sampling loop time step"):
-            time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
-            self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, *_ = self.model_predictions(
-                img, time_cond, self_cond, clip_x_start=True, rederive_pred_noise=True
-            )
+            if blockshape is None:
+                x_self_cond = x_start if self.self_condition else None
+                img, x_start = self.ddim_sample(img, (time, time_next), x_self_cond)
 
-            if time_next < 0:
-                img = x_start
+            else:
+                noise = torch.randn(shape, device=self.device)
+                img1, x_start1 = self.blockwise_sample(
+                    img,
+                    noise,
+                    x_start,
+                    chunk_weight,
+                    blockshape,
+                    self.ddim_sample,
+                    (time, time_next),
+                    batchsize=n_batch_blocks,
+                )
+                img2, x_start2 = self.blockwise_sample(
+                    torch.roll(img, (overlap, overlap), (2, 3)),
+                    torch.roll(noise, (overlap, overlap), (2, 3)),
+                    torch.roll(x_start) if x_start is not None else None,
+                    chunk_weight,
+                    blockshape,
+                    self.ddim_sample,
+                    (time, time_next),
+                    batchsize=n_batch_blocks,
+                )
+                img2 = torch.roll(img2, (-overlap, -overlap), (2, 3))
+                if self.self_condition:
+                    x_start = x_start1 + x_start2
+                img = img1 + img2
+            if return_all_timesteps:
                 imgs.append(img)
-                continue
-
-            alpha = self.alphas_cumprod[time]
-            alpha_next = self.alphas_cumprod[time_next]
-
-            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
-            c = (1 - alpha_next - sigma**2).sqrt()
-            if noise is None:
-                noise = torch.randn_like(img)
-
-            img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
-
-            imgs.append(img)
-
-        ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
+        if return_all_timesteps:
+            ret = torch.stack(imgs, dim=1)
+        else:
+            ret = img
 
         ret = self.unnormalize(ret)
         return ret
@@ -427,7 +589,7 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def sample(self, batch_size=16, return_all_timesteps=False, noise=None):
         image_size, channels = self.image_size, self.channels
-        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
+        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample_loop
         return sample_fn(
             (batch_size, channels, image_size, image_size), return_all_timesteps=return_all_timesteps, noise=noise
         )
