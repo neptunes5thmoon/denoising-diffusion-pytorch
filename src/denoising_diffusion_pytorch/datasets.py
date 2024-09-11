@@ -4,14 +4,12 @@ import logging
 import os
 from enum import Enum
 from functools import partial
-from operator import itemgetter
 from pathlib import Path
-from typing import Any, Mapping, Sequence, Union
+from typing import Any, Mapping, Sequence
 
 import dask
 import datatree
 import numpy as np
-import torch
 import xarray as xr
 import zarr
 from datatree import DataTree
@@ -19,8 +17,7 @@ from fibsem_tools import read, read_xarray
 from PIL import Image
 from torch import Tensor, nn
 from torch.utils.data import ConcatDataset, Dataset
-from torchvision import utils
-from torchvision.transforms import v2 as T
+from torchvision.transforms import v2 as transforms
 
 from denoising_diffusion_pytorch.convenience import exists
 
@@ -71,7 +68,7 @@ class SimpleDataset(Dataset):
         self,
         folder,
         image_size,
-        exts=["jpg", "jpeg", "png", "tiff"],
+        exts=("jpg", "jpeg", "png", "tiff"),
         augment_horizontal_flip=False,
         augment_vertical_flip=False,
         load_to_ram=False,
@@ -86,13 +83,13 @@ class SimpleDataset(Dataset):
             self.imgs = [Image.open(path) for path in self.paths]
         maybe_convert_fn = partial(convert_image_to_fn, convert_image_to) if exists(convert_image_to) else nn.Identity()
 
-        self.transform = T.Compose(
+        self.transform = transforms.Compose(
             [
-                T.Lambda(maybe_convert_fn),
-                T.RandomCrop(image_size, padding=0) if image_size is not None else nn.Identity(),
-                T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-                T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
-                T.ToTensor(),
+                transforms.Lambda(maybe_convert_fn),
+                transforms.RandomCrop(image_size, padding=0) if image_size is not None else nn.Identity(),
+                transforms.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
+                transforms.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
+                transforms.ToTensor(),
             ]
         )
 
@@ -119,7 +116,7 @@ class ZarrDataset(Dataset):
     ):
         super().__init__()
         self.folder = folder
-        self.array_paths = [p for p in Path(folder).glob("**/*.zarr")]
+        self.array_paths = list(Path(folder).glob("**/*.zarr"))
         self.image_size = image_size
         self.load_to_ram = load_to_ram
         self.shapes = []
@@ -131,14 +128,14 @@ class ZarrDataset(Dataset):
             if self.load_to_ram:
                 self.crops.append(crop)
 
-        self.transform = T.Compose(
+        self.transform = transforms.Compose(
             [
-                T.ToTensor(),
+                transforms.ToTensor(),
                 # RandomNonEmptyCrop(image_size, padding=0),
-                T.RandomCrop(image_size, padding=0),
-                T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-                T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
-                # T.ToTensor(),
+                transforms.RandomCrop(image_size, padding=0),
+                transforms.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
+                transforms.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
+                # transforms.ToTensor(),
             ]
         )
         self.flat_index = []
@@ -207,7 +204,16 @@ class CellMapDatasets3Das2D(ConcatDataset):
             raw_datasets = [
                 "volumes/raw",
             ] * len(data_paths)
-        assert len(data_paths) == len(annotation_paths) == len(crop_lists) == len(raw_datasets)
+        if len({len(data_paths), len(annotation_paths), len(crop_lists), len(raw_datasets)}) > 1:
+            msg = (
+                f"`data_paths`, `annotation_paths`, `crop_lists` and `raw_datasets`"
+                f"should all be of the same length, but found"
+                f"{data_paths=} (len: {len(data_paths)}), "
+                f"{annotation_paths=} (len: {len(annotation_paths)}), "
+                f"{crop_lists=} (len: {len(crop_lists)}), "
+                f"{raw_datasets=} (len: {len(raw_datasets)}), "
+            )
+            raise ValueError(msg)
         for dp, ap, cl, rd in zip(data_paths, annotation_paths, crop_lists, raw_datasets):
             cellmap_datasets.append(
                 CellMapDataset3Das2D(
@@ -278,21 +284,28 @@ class CellMapDataset3Das2D(ConcatDataset):
         if allow_single_class_crops is not None:
             self.allow_single_class_crops = set(self.allow_single_class_crops)
             if not self.allow_single_class_crops.issubset(set(self.class_list).union({None})):
-                msg = f"`allow_single_class_crops` ({self.allow_single_class_crops}) should be subset of `class_list` ({self.class_list}) and {{None}}."
+                msg = (
+                    f"`allow_single_class_crops` ({self.allow_single_class_crops}) should be "
+                    f"subset of `class_list` ({self.class_list}) and {{None}}."
+                )
                 raise ValueError(msg)
         self.crops = self._get_crop_list(crop_list)
 
         super().__init__(self.crops)
-        self.transform = T.Compose(
+        self.transform = transforms.Compose(
             [
-                T.ToImage(),
-                T.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
-                T.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
+                transforms.ToImage(),
+                transforms.RandomHorizontalFlip() if augment_horizontal_flip else nn.Identity(),
+                transforms.RandomVerticalFlip() if augment_vertical_flip else nn.Identity(),
             ]
         )
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__} at {self.data_path} at {self.scale} with crops {[c.crop_name for c in self.crops]}"
+        descr = (
+            f"{self.__class__.__name__} at {self.data_path} at {self.scale} "
+            f"with crops {[c.crop_name for c in self.crops]}"
+        )
+        return descr
 
     def _get_crop_list(self, crop_list: Sequence[str] | None = None) -> list[AnnotationCrop3Das2D]:
         filtering = self.allow_single_class_crops != set(self.class_list).union({None})
@@ -356,7 +369,10 @@ class CellMapDataset3Das2D(ConcatDataset):
                 for crop_name in crop_list
             ]
         if len(crops) == 0:
-            msg = f"List of crops for {self.data_path} with annotations for {self.class_list} at {self.annotation_path} is empty."
+            msg = (
+                f"List of crops for {self.data_path} with annotations for {self.class_list}"
+                f"at {self.annotation_path} is empty."
+            )
             raise ValueError(msg)
         return crops
 
@@ -385,7 +401,10 @@ class CellMapDataset3Das2D(ConcatDataset):
                         break
                     scale_to_voxelsize[name] = voxel_size
                 if self._raw_scale is None:
-                    msg = f"{arr_path} does not contain array with voxel_size {self.scale}. Available scale levels are: {scale_to_voxelsize}"
+                    msg = (
+                        f"{arr_path} does not contain array with voxel_size {self.scale}. "
+                        f"Available scale levels are: {scale_to_voxelsize}"
+                    )
                     raise ValueError(msg)
             else:
                 voxel_size = {ax: msarr[ax].values[1] - msarr[ax].values[0] for ax in msarr.dims}
@@ -407,14 +426,17 @@ class CellMapDataset3Das2D(ConcatDataset):
         # return self.transform(img_tensor)
         return self.transform(super().__getitem__(idx))
 
-    #     for name, dtarr in cls_msarr.children.items():
-    #         arr = dtarr.data
-    #         voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
-    #         if voxel_size == self.parent_data.scale:
-    #             return name
-    #         scale_to_voxelsize[cls_name] = voxel_size
-    #     msg = f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. Available scale levels are: {scale_to_voxelsize}"
-    #     raise ValueError(msg)
+        #     for name, dtarr in cls_msarr.children.items():
+        #         arr = dtarr.data
+        #         voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
+        #         if voxel_size == self.parent_data.scale:
+        #             return name
+        #         scale_to_voxelsize[cls_name] = voxel_size
+        # msg = (
+        #     f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. "
+        #     f"Available scale levels are: {scale_to_voxelsize}"
+        # )
+        #     raise ValueError(msg)
 
 
 class AnnotationCrop3Das2D(Dataset):
@@ -443,7 +465,7 @@ class AnnotationCrop3Das2D(Dataset):
         self._coords: None | xr.Coordinates = None
         self.annotated_classes = get_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation", "class_names"])
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
-        self._class_xarray: dict[str, xr.DataArray] = dict()
+        self._class_xarray: dict[str, xr.DataArray] = {}
         self._raw_xarray = None
         self._class_ids_xarray = None
         self.dask_workers = dask_workers
@@ -550,12 +572,20 @@ class AnnotationCrop3Das2D(Dataset):
             if ref_attr is None:
                 ref_attr = curr_attr
             elif curr_attr != ref_attr:
-                msg = f"Crop {self} has arrays with different values for {attr} for requested scale {self.parent_data.scale}. Found (at least) {curr_attr}, {ref_attr}."
+                msg = (
+                    f"Crop {self} has arrays with different values for {attr} "
+                    f"for requested scale {self.parent_data.scale}. "
+                    f"Found (at least) {curr_attr}, {ref_attr}."
+                )
                 raise ValueError(msg)
         return ref_attr
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__} {self.crop_name} at {self.annotation_path} from {self.parent_data.__class__.__name__} at {self.parent_data.data_path}"
+        descr = (
+            f"{self.__class__.__name__} {self.crop_name} at {self.annotation_path} from "
+            f"{self.parent_data.__class__.__name__} at {self.parent_data.data_path}"
+        )
+        return descr
 
     def _infer_scale_level(self, ds_name: str) -> str:
         if ds_name not in self.crop:
@@ -563,14 +593,17 @@ class AnnotationCrop3Das2D(Dataset):
             raise ValueError(msg)
         arr_path = os.path.join(self.annotation_path, self.crop_name, ds_name)
         msarr = read_xarray(arr_path)
-        scale_to_voxelsize = dict()
+        scale_to_voxelsize = {}
         for name, dtarr in msarr.children.items():
             arr = dtarr.data
             voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
             if voxel_size == self.parent_data.scale:
                 return name
             scale_to_voxelsize[ds_name] = voxel_size
-        msg = f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. Available scale levels are: {scale_to_voxelsize}"
+        msg = (
+            f"{arr_path} does not contain array with `voxel_size` {self.parent_data.scale}. "
+            f"Available scale levels are: {scale_to_voxelsize}"
+        )
         raise ValueError(msg)
 
     def get_classes(self) -> list[str]:
@@ -782,13 +815,12 @@ class BatchedZarrSamples(Dataset):
         labels: str = "labels",
         raw: str = "raw",
         raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
-        **kwargs,
         # label_representation_in: LabelRepresentation = LabelRepresentation.BINARY,
         # label_representation_out: LabelRepresentation = LabelRepresentation.BINARY,
     ):
         self.zarr_path = zarr_path
         self.zarr_file = zarr.open(self.zarr_path, "r")
-        self.digits = len(list(self.zarr_file.keys())[0])
+        self.digits = len(next(iter(self.zarr_file.keys())))
 
         for k in self.zarr_file.keys():
             if self.digits != len(k):
@@ -928,8 +960,3 @@ if __name__ == "__main__":
         annotation_path=annotation_path,
         crop_list=["crop1", "crop113"],
     )
-    print(ds)
-    print(len(ds))
-    print(type(ds[10]))
-    print(ds[10].shape)
-    print(ds[10])
