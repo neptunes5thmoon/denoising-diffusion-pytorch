@@ -16,6 +16,14 @@ from denoising_diffusion_pytorch.convenience import (
 )
 
 
+def prob_mask_like(shape, prob, device):
+    if prob == 1:
+        return torch.ones(shape, device=device, dtype=torch.bool)
+    elif prob == 0:
+        return torch.zeros(shape, device=device, dtype=torch.bool)
+    else:
+        return torch.zeros(shape, device=device).float().uniform_(0, 1) < prob
+
 
 class Residual(nn.Module):
     def __init__(self, fn):
@@ -155,21 +163,32 @@ class ResnetBlock(nn.Module):
         dim_out,
         *,
         time_emb_dim=None,
+        classes_emb_dim=None,
         dropout=0.0,
     ):
         super().__init__()
-        self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2)) if exists(time_emb_dim) else None
+        emb_dim = 0
+        if time_emb_dim is not None:
+            emb_dim += int(time_emb_dim)
+        if classes_emb_dim is not None:
+            emb_dim += int(classes_emb_dim)
+        if emb_dim > 0:
+            self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(emb_dim, dim_out * 2))
+        else:
+            self.mlp = None
 
         self.block1 = Block(dim, dim_out, dropout=dropout)
         self.block2 = Block(dim_out, dim_out)
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
-    def forward(self, x, time_emb=None):
+    def forward(self, x, time_emb=None, class_emb=None):
         scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
-            time_emb = rearrange(time_emb, "b c -> b c 1 1")
-            scale_shift = time_emb.chunk(2, dim=1)
+        if exists(self.mlp) and (exists(time_emb) or exists(class_emb)):
+            cond_emb = tuple(filter(exists, (time_emb, class_emb)))
+            cond_emb = torch.cat(cond_emb, dim=-1)
+            cond_emb = self.mlp(cond_emb)
+            cond_emb = rearrange(cond_emb, "b c -> b c 1 1")
+            scale_shift = cond_emb.chunk(2, dim=1)
 
         h = self.block1(x, scale_shift=scale_shift)
 
@@ -246,6 +265,8 @@ class Unet(nn.Module):
     def __init__(
         self,
         dim,
+        num_classes=None,
+        cond_drop_prob=0.5,
         init_dim=None,
         out_dim=None,
         dim_mults=(1, 2, 4, 8),
@@ -263,6 +284,11 @@ class Unet(nn.Module):
         flash_attn=False,
     ):
         super().__init__()
+
+        # classifier free guidance stuff
+
+        self.cond_drop_prob = cond_drop_prob
+        self.num_classes = num_classes
 
         # determine dimensions
 
@@ -313,12 +339,25 @@ class Unet(nn.Module):
             )
             raise ValueError(msg)
 
+        # class embeddings
+        if self.num_classes is not None:
+            self.classes_emb = nn.Embedding(num_classes, dim)
+            self.null_classes_emb = nn.Parameter(torch.randn(dim))
+            classes_dim = dim * 4
+            self.classes_mlp = nn.Sequential(
+                nn.Linear(dim, classes_dim),
+                nn.GELU(),
+                nn.Linear(classes_dim, classes_dim),
+            )
+        else:
+            classes_dim = None
         # prepare blocks
 
         full_attention_block = partial(Attention, flash=flash_attn)
         resnet_block = partial(
             ResnetBlock,
             time_emb_dim=time_dim,
+            classes_emb_dim=classes_dim,
             dropout=dropout,
         )
 
@@ -393,19 +432,71 @@ class Unet(nn.Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
+    def forward_with_cond_scale(
+        self,
+        x,
+        time,
+        x_self_cond=None,
+        classes=None,
+        cond_scale=1.0,
+        rescaled_phi=0.0,
+    ):
+        logits = self.forward(
+            x,
+            time,
+            x_self_cond=x_self_cond,
+            classes=classes,
+            cond_drop_prob=0.0,
+        )
+        if cond_scale == 1:
+            return logits
+        null_logits = self.forward(
+            x,
+            time,
+            x_self_cond=x_self_cond,
+            classes=classes,
+            cond_drop_prob=1.0,
+        )
+        scaled_logits = null_logits + (logits - null_logits) * cond_scale
+        if rescaled_phi == 0.0:
+            return scaled_logits, null_logits
+        std_fn = partial(torch.std, dim=tuple(range(1, scaled_logits.ndim)), keepdim=True)
+        rescaled_logits = scaled_logits * (std_fn(logits) / std_fn(scaled_logits))
+        interpolated_rescaled_logits = rescaled_logits * rescaled_phi + scaled_logits * (1.0 - rescaled_phi)
+        return interpolated_rescaled_logits, null_logits
+
     def forward(
         self,
         x,
         time,
         x_self_cond=None,
+        classes=None,
+        cond_drop_prob=None,
     ):
         if not all(divisible_by(d, self.downsample_factor) for d in x.shape[-2:]):
             msg = "Your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}"
             raise ValueError(msg)
+        batch = x.shape[0]
+        if self.num_classes is not None:
+            cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
+            classes_emb = self.classes_emb(classes)
+            if cond_drop_prob > 0:
+                keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=x.device)
+                null_classes_emb = repeat(self.null_classes_emb, "d -> b d", b=batch)
+                classes_emb = torch.where(
+                    rearrange(keep_mask, "b -> b 1"),
+                    classes_emb,
+                    null_classes_emb,
+                )
+            c = self.classes_mlp(classes_emb)
+        else:
+            c = None
+
+        # self conditioning
         if self.self_condition:
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim=1)
-
+        # unet
         x = self.init_conv(x)
         r = x.clone()
 
@@ -414,30 +505,30 @@ class Unet(nn.Module):
         h = []
 
         for block1, block2, attn, downsample in self.downs:
-            x = block1(x, t)
+            x = block1(x, t, c)
             h.append(x)
 
-            x = block2(x, t)
+            x = block2(x, t, c)
             x = attn(x) + x
             h.append(x)
 
             x = downsample(x)
 
-        x = self.mid_block1(x, t)
+        x = self.mid_block1(x, t, c)
         x = self.mid_attn(x) + x
-        x = self.mid_block2(x, t)
+        x = self.mid_block2(x, t, c)
 
         for block1, block2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim=1)
-            x = block1(x, t)
+            x = block1(x, t, c)
 
             x = torch.cat((x, h.pop()), dim=1)
-            x = block2(x, t)
+            x = block2(x, t, c)
             x = attn(x) + x
 
             x = upsample(x)
 
         x = torch.cat((x, r), dim=1)
 
-        x = self.final_res_block(x, t)
+        x = self.final_res_block(x, t, c)
         return self.final_conv(x)
