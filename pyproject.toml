@@ -26,6 +26,7 @@ dependencies = [
     "accelerate",
     "einops",
     "ema-pytorch>=0.4.2",
+    "more-itertools",
     "numpy",
     "pillow",
     "pytorch-fid",
@@ -68,7 +69,7 @@ type = "conda"
 command = "mamba"
 conda-forge = true
 detached = true
-dependencies = ["black>23.1.0", "mypy>=1.0.0", "ruff>=0.0.243"]
+dependencies = ["black>23.1.0", "mypy>=1.0.0", "ruff>=0.0.243", "isort"]
 
 [tool.hatch.envs.lint.scripts]
 typing = "mypy --install-types --non-interactive {args:src/denoising_diffusion_pytorch tests}"
