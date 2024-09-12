@@ -415,29 +415,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         return self._raw_scale
 
     def __getitem__(self, idx: int) -> Tensor:
-        # img = super().__getitem__(idx)
-        # if isinstance(img, tuple):
-        #     img_tensor = []
-        #     for im in img:
-        #         img_tensor.append(totensor(im))
-        #     img_tensor = tuple(img_tensor)
-        # else:
-        #     img_tensor = totensor(img)
-        # return self.transform(img_tensor)
         return self.transform(super().__getitem__(idx))
-
-        #     for name, dtarr in cls_msarr.children.items():
-        #         arr = dtarr.data
-        #         voxel_size = {ax: arr[ax].values[1] - arr[ax].values[0] for ax in arr.dims}
-        #         if voxel_size == self.parent_data.scale:
-        #             return name
-        #         scale_to_voxelsize[cls_name] = voxel_size
-        # msg = (
-        #     f"{arr_path} does not contain array with voxel_size {self.parent_data.scale}. "
-        #     f"Available scale levels are: {scale_to_voxelsize}"
-        # )
-        #     raise ValueError(msg)
-
 
 class AnnotationCrop3Das2D(Dataset):
     def __init__(
@@ -827,43 +805,6 @@ class BatchedZarrSamples(Dataset):
                 msg = f"Keys of {self.zarr_path} do not have same length ({self.digits})"
                 raise ValueError(msg)
         self.raw_channel = raw_channel
-        # self.label_representation_in = label_representation_in
-        # self.label_representation_out = label_representation_out
-        # if labels is None:
-        # self.labels = [
-        #         "ecs",
-        #         "pm",
-        #         "mito_mem",
-        #         "mito_lum",
-        #         "mito_ribo",
-        #         "golgi_mem",
-        #         "golgi_lum",
-        #         "ves_mem",
-        #         "ves_lum",
-        #         "endo_mem",
-        #         "endo_lum",
-        #         "lyso_mem",
-        #         "lyso_lum",
-        #         "ld_mem",
-        #         "ld_lum",
-        #         "er_mem",
-        #         "er_lum",
-        #         "eres_mem",
-        #         "eres_lum",
-        #         "ne_mem",
-        #         "ne_lum",
-        #         "np_out",
-        #         "np_in",
-        #         "hchrom",
-        #         "nhchrom",
-        #         "echrom",
-        #         "nechrom",
-        #         "nucpl",
-        #         "nucleo",
-        #         "mt_out",
-        #         "mt_in",
-        #     ]
-        # else:
         self.labels = labels
         self.raw = raw
 
@@ -878,21 +819,6 @@ class BatchedZarrSamples(Dataset):
 
         arrs: list[np.ndarray] = []
         arrs.append(np.array(sample_arr[self.labels]))
-        # if self.label_representation_out == LabelRepresentation.CLASS_IDS:
-        #     for cls_name in self.labels:
-        #         arrs.append(np.array(sample_arr[cls_name]))
-        #     arrs = [np.zeros_like(arrs[0]), *arrs]
-        #     arrs = np.concatenate(arrs, axis=0).argmax(axis=0)
-        # else:
-        #     if self.label_representation == LabelRepresentation.ONE_HOT:
-        #         if "background" not in self.labels:
-        #             bg_arrs = []
-        #             for cls_iter in self.labels:
-        #                 bg_arrs.append(np.array(sample_arr[cls_iter]))
-        #             arrs.append(np.ones_like(arrs[-1]) - np.sum(arrs, axis=0))
-        #     for cls_name in self.labels:
-        #         arrs.append(np.array(sample_arr[cls_name]))
-
         if self.raw_channel == RawChannelOptions.EXCLUDE:
             res = np.concatenate(arrs, axis=1)
         else:
