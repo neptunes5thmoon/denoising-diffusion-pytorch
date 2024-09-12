@@ -9,36 +9,27 @@ from random import random
 import mlflow
 import numpy as np
 import torch
-import torch.nn.functional as F
-import zarr
+import torch.nn.functional as f
 from accelerate import Accelerator
 from einops import rearrange, reduce
 from ema_pytorch import EMA
 from more_itertools import batched
-from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch.amp import autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torchvision import transforms as T
 from torchvision import utils
 from tqdm.auto import tqdm
 
-from denoising_diffusion_pytorch.convenience import (
-    cycle,
-    default,
-    divisible_by,
-    exists,
-    has_int_squareroot,
-    identity,
-    num_to_groups,
-)
+from denoising_diffusion_pytorch.convenience import (cycle, default,
+                                                     divisible_by, exists,
+                                                     has_int_squareroot,
+                                                     identity, num_to_groups)
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.version import __version__
 
-# constants
-
+logger = logging.getLogger(__name__)
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 
 
@@ -101,7 +92,7 @@ def cosine_beta_schedule(timesteps, s=0.008):
     return torch.clip(betas, 0, 0.999)
 
 
-def sigmoid_beta_schedule(timesteps, start=-3, end=3, tau=1, clamp_min=1e-5):
+def sigmoid_beta_schedule(timesteps, start=-3, end=3, tau=1):
     """
     sigmoid schedule
     proposed in https://arxiv.org/abs/2212.11972 - Figure 8
@@ -127,7 +118,7 @@ class GaussianDiffusion(nn.Module):
         sampling_timesteps=None,
         objective="pred_v",
         beta_schedule="sigmoid",
-        schedule_fn_kwargs=dict(),
+        schedule_fn_kwargs=None,
         ddim_sampling_eta=0.0,
         auto_normalize=True,
         offset_noise_strength=0.0,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
@@ -137,8 +128,8 @@ class GaussianDiffusion(nn.Module):
         channel_weights=None,
     ):
         super().__init__()
-        assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
-        assert not hasattr(model, "random_or_learned_sinusoidal_cond") or not model.random_or_learned_sinusoidal_cond
+        if schedule_fn_kwargs is None:
+            schedule_fn_kwargs = {}
 
         self.model = model
 
@@ -148,12 +139,17 @@ class GaussianDiffusion(nn.Module):
         self.image_size = image_size
 
         self.objective = objective
-
-        assert objective in {
+        if objective not in {
             "pred_noise",
             "pred_x0",
             "pred_v",
-        }, "objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])"
+        }:
+            msg = (
+                f"""`objective` must be either `"pred_noise"` (predict noise) or `"pred_x0"` (predict image start)"""
+                f""" or `"pred_v"` (predict v [v-parameterization as defined in appendix D of progressive"""
+                f""" distillation paper, used in imagen-video successfully]), but got {objective}"""
+            )
+            raise ValueError(msg)
 
         if beta_schedule == "linear":
             beta_schedule_fn = linear_beta_schedule
@@ -162,13 +158,14 @@ class GaussianDiffusion(nn.Module):
         elif beta_schedule == "sigmoid":
             beta_schedule_fn = sigmoid_beta_schedule
         else:
-            raise ValueError(f"unknown beta schedule {beta_schedule}")
+            msg = f"""Unkown `beta_schedule`: {beta_schedule}. Options are `"linear"`, `"cosine"` or `"sigmoid"`."""
+            raise ValueError(msg)
 
         betas = beta_schedule_fn(timesteps, **schedule_fn_kwargs)
 
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+        alphas_cumprod_prev = f.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
@@ -178,26 +175,28 @@ class GaussianDiffusion(nn.Module):
         self.sampling_timesteps = default(
             sampling_timesteps, timesteps
         )  # default num sampling timesteps to number of timesteps at training
-
-        assert self.sampling_timesteps <= timesteps
+        if self.sampling_timesteps > timesteps:
+            msg = (
+                f"`sampling_timesteps` ({self.sampling_timesteps}) needs to be smaller "
+                f"or equal to `timesteps` ({timesteps})"
+            )
+            raise ValueError(msg)
         self.is_ddim_sampling = self.sampling_timesteps < timesteps
         self.ddim_sampling_eta = ddim_sampling_eta
 
         # helper function to register buffer from float64 to float32
 
-        register_buffer = lambda name, val: self.register_buffer(name, val.to(torch.float32))
-
-        register_buffer("betas", betas)
-        register_buffer("alphas_cumprod", alphas_cumprod)
-        register_buffer("alphas_cumprod_prev", alphas_cumprod_prev)
+        self.register_buffer("betas", betas.to(torch.float32))
+        self.register_buffer("alphas_cumprod", alphas_cumprod.to(torch.float32))
+        self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev.to(torch.float32))
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
 
-        register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
-        register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod))
-        register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
-        register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
-        register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
+        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod).to(torch.float32))
+        self.register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod).to(torch.float32))
+        self.register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod).to(torch.float32))
+        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod).to(torch.float32))
+        self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1).to(torch.float32))
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
@@ -205,21 +204,21 @@ class GaussianDiffusion(nn.Module):
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
 
-        register_buffer("posterior_variance", posterior_variance)
+        self.register_buffer("posterior_variance", posterior_variance.to(torch.float32))
 
         # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
 
-        register_buffer(
+        self.register_buffer(
             "posterior_log_variance_clipped",
-            torch.log(posterior_variance.clamp(min=1e-20)),
+            torch.log(posterior_variance.clamp(min=1e-20)).to(torch.float32),
         )
-        register_buffer(
+        self.register_buffer(
             "posterior_mean_coef1",
-            betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod),
+            (betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)).to(torch.float32),
         )
-        register_buffer(
+        self.register_buffer(
             "posterior_mean_coef2",
-            (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod),
+            ((1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod)).to(torch.float32),
         )
         self.immiscible = immiscible
 
@@ -239,18 +238,21 @@ class GaussianDiffusion(nn.Module):
             maybe_clipped_snr.clamp_(max=min_snr_gamma)
 
         if objective == "pred_noise":
-            register_buffer("loss_weight", maybe_clipped_snr / snr)
+            self.register_buffer("loss_weight", (maybe_clipped_snr / snr).to(torch.float32))
         elif objective == "pred_x0":
-            register_buffer("loss_weight", maybe_clipped_snr)
+            self.register_buffer("loss_weight", maybe_clipped_snr.to(torch.float32))
         elif objective == "pred_v":
-            register_buffer("loss_weight", maybe_clipped_snr / (snr + 1))
+            self.register_buffer("loss_weight", (maybe_clipped_snr / (snr + 1)).to(torch.float32))
 
         if channel_weights is not None:
-            assert model.channels == len(
-                channel_weights
-            ), f"if channel weights are given the length must match the number of channels ({model.channels})"
+            if model.channels != len(channel_weights):
+                msg = (
+                    f"if `channel_weights` are given the length must match the number of channels ({model.channels}),"
+                    f" but got {channel_weights} of length {len(channel_weights)}"
+                )
+                raise ValueError(msg)
             channel_weights_t = torch.nn.functional.normalize(torch.FloatTensor(channel_weights), p=1, dim=0)
-            register_buffer("channel_weights", channel_weights_t)
+            self.register_buffer("channel_weights", channel_weights_t.to(torch.float32))
         else:
             self.channel_weights = None
 
@@ -293,11 +295,22 @@ class GaussianDiffusion(nn.Module):
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
-        return posterior_mean, posterior_variance, posterior_log_variance_clipped
+        return (
+            posterior_mean,
+            posterior_variance,
+            posterior_log_variance_clipped,
+        )
 
-    def model_predictions(self, x, t, x_self_cond=None, clip_x_start=False, rederive_pred_noise=False):
-        model_output = self.model(x, t, x_self_cond)
+    def model_predictions(
+        self,
+        x,
+        t,
+        x_self_cond=None,
+        clip_x_start=False,
+        rederive_pred_noise=False,
+    ):
         maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
+        model_output = self.model(x, t, x_self_cond)
 
         if self.objective == "pred_noise":
             pred_noise = model_output
@@ -347,7 +360,18 @@ class GaussianDiffusion(nn.Module):
         return pred_img, x_start
 
     @torch.inference_mode()
-    def blockwise_sample(self, data, noise, self_cond, block_weight, blockshape, sampling_func, t, batchsize=1):
+    def blockwise_sample(
+        self,
+        data,
+        noise,
+        self_cond,
+        block_weight,
+        blockshape,
+        sampling_func,
+        t,
+        batchsize=1,
+        **sample_fn_kwargs,
+    ):
         if np.any(np.array(data.shape) % np.array(blockshape)):
             msg = f"For now, the array shape ({data.shape}) needs to be multiple of the blockshape ({blockshape})."
             raise ValueError(msg)
@@ -383,7 +407,9 @@ class GaussianDiffusion(nn.Module):
         processed_blocks = []
         processed_xstarts = []
         for block_batch, noise_batch, cond_batch in zip(
-            batched(block_list, batchsize), batched(noise_list, batchsize), batched(self_cond_list, batchsize)
+            batched(block_list, batchsize),
+            batched(noise_list, batchsize),
+            batched(self_cond_list, batchsize),
         ):
             # batch blocks by concatenating along batch dimension
             batch_data = torch.cat(block_batch, axis=0)
@@ -393,7 +419,9 @@ class GaussianDiffusion(nn.Module):
             else:
                 batch_cond = None
             # process each block
-            processed_batch, x_start = sampling_func(batch_data, t=t, x_self_cond=batch_cond, noise=batch_noise)
+            processed_batch, x_start = sampling_func(
+                batch_data, t=t, x_self_cond=batch_cond, noise=batch_noise, **sample_fn_kwargs
+            )
             # weight each block
             processed_batch = processed_batch * block_weight
             # turn back into a list by splitting along batch dimension
@@ -413,7 +441,13 @@ class GaussianDiffusion(nn.Module):
             for assembly in batched(assembly_list, int(i)):
                 new_assembly_list.append(torch.cat(assembly, axis))
             assembly_list = new_assembly_list
-        assert len(assembly_list) == 1
+        if len(assembly_list) != 1:
+            msg = (
+                f"`assembly_list` should be a single element after for loop but got {assembly_list} of length"
+                f" {len(assembly_list)}"
+            )
+            raise RuntimeError(msg)
+
         assembly_list = assembly_list[0]
         if self.self_condition:
             x_assembly_list = processed_xstarts
@@ -422,7 +456,12 @@ class GaussianDiffusion(nn.Module):
                 for assembly in batched(x_assembly_list, int(i)):
                     new_assembly_list.append(torch.cat(assembly, axis))
                 x_assembly_list = new_assembly_list
-            assert len(x_assembly_list) == 1
+            if len(x_assembly_list) != 1:
+                msg = (
+                f"`x_assembly_list` should be a single element after for loop but got {x_assembly_list} of length"
+                f" {len(x_assembly_list)}"
+            )
+                raise RuntimeError(msg)
             x_start = x_assembly_list[0]
         return assembly_list, x_start
 
@@ -471,7 +510,7 @@ class GaussianDiffusion(nn.Module):
                 img2, x_start2 = self.blockwise_sample(
                     torch.roll(img, (overlap, overlap), (2, 3)),
                     torch.roll(noise, (overlap, overlap), (2, 3)),
-                    torch.roll(x_start, (overlap, overlap), (2, 3)) if x_start is not None else None,
+                    (torch.roll(x_start, (overlap, overlap), (2, 3)) if x_start is not None else None),
                     chunk_weight,
                     blockshape,
                     self.p_sample,
@@ -598,8 +637,9 @@ class GaussianDiffusion(nn.Module):
     def interpolate(self, x1, x2, t=None, lam=0.5):
         b, *_, device = *x1.shape, x1.device
         t = default(t, self.num_timesteps - 1)
-
-        assert x1.shape == x2.shape
+        if x1.shape != x2.shape:
+            msg = f"Shapes of images to interpolate between needs to match but got {x1.shape} and {x2.shape}"
+            raise ValueError(msg)
 
         t_batched = torch.full((b,), t, device=device)
         xt1, xt2 = map(lambda x: self.q_sample(x, t=t_batched), (x1, x2))
@@ -608,7 +648,11 @@ class GaussianDiffusion(nn.Module):
 
         x_start = None
 
-        for i in tqdm(reversed(range(0, t)), desc="interpolation sample time step", total=t):
+        for i in tqdm(
+            reversed(range(0, t)),
+            desc="interpolation sample time step",
+            total=t,
+        ):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(img, i, self_cond)
 
@@ -655,7 +699,7 @@ class GaussianDiffusion(nn.Module):
         # this technique will slow down training by 25%, but seems to lower FID significantly
 
         x_self_cond = None
-        if self.self_condition and random() < 0.5:
+        if self.self_condition and random() < 0.5:  # noqa: PLR2004,S311
             with torch.inference_mode():
                 x_self_cond = self.model_predictions(x, t).pred_x_start
                 x_self_cond.detach_()
@@ -672,9 +716,14 @@ class GaussianDiffusion(nn.Module):
             v = self.predict_v(x_start, t, noise)
             target = v
         else:
-            raise ValueError(f"unknown objective {self.objective}")
+            msg = (
+                f"""`objective` must be either `"pred_noise"` (predict noise) or `"pred_x0"` (predict image start)"""
+                f""" or `"pred_v"` (predict v [v-parameterization as defined in appendix D of progressive"""
+                f""" distillation paper, used in imagen-video successfully]), but got {self.objective}"""
+            )
+            raise ValueError(msg)
 
-        loss = F.mse_loss(model_out, target, reduction="none")
+        loss = f.mse_loss(model_out, target, reduction="none")
 
         # apply channel weights
         if self.channel_weights is not None:
@@ -687,17 +736,15 @@ class GaussianDiffusion(nn.Module):
     def forward(self, img, *args, **kwargs):
         (
             b,
-            c,
+            _,
             h,
             w,
             device,
             img_size,
-        ) = (
-            *img.shape,
-            img.device,
-            self.image_size,
-        )
-        assert h == img_size and w == img_size, f"height and width of image must be {img_size}"
+        ) = (*img.shape, img.device, self.image_size)
+        if h != img_size or w != img_size:
+            msg = f"Height and width of image must be {img_size}, but got {h} and {w}"
+            raise ValueError(msg)
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         img = self.normalize(img)
@@ -732,19 +779,20 @@ class Trainer:
         max_grad_norm=1.0,
         num_fid_samples=50000,
         save_best_and_latest_only=False,
-        dataloader_nworkers=cpu_count(),
+        dataloader_nworkers=None,
         persistent_workers=True,
         prefetch_factor=2,
         shuffle_dataloader=True,
         repeat_data=True,
-        device=None,
     ):
         super().__init__()
-
+        if dataloader_nworkers is None:
+            dataloader_nworkers = cpu_count()
         # accelerator
 
         self.accelerator = Accelerator(
-            split_batches=split_batches, mixed_precision=mixed_precision_type if amp else "no"
+            split_batches=split_batches,
+            mixed_precision=mixed_precision_type if amp else "no",
         )
         # saver
         self.exporter = exporter
@@ -756,18 +804,18 @@ class Trainer:
         is_ddim_sampling = diffusion_model.is_ddim_sampling
 
         # sampling and training hyperparameters
+        if not has_int_squareroot(num_samples):
+            msg = f"Number of samples must have an integer square root but got {num_samples=}"
+            raise ValueError(msg)
 
-        assert has_int_squareroot(num_samples), "number of samples must have an integer square root"
         self.num_samples = num_samples
         self.save_and_sample_every = save_and_sample_every
 
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
-        assert (
-            train_batch_size * gradient_accumulate_every
-        ) >= 16, (
-            "your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above"
-        )
+        if train_batch_size * gradient_accumulate_every < 16:  # noqa: PLR2004
+            msg = "Your effective batch size (`train_batch_size` x `gradient_accumulate_every`) should be at least 16"
+            raise UserWarning(msg)
 
         self.train_num_steps = train_num_steps
         if not repeat_data and self.train_num_steps > len(dataset):
@@ -779,11 +827,12 @@ class Trainer:
         # dataset and dataloader
 
         self.ds = dataset
-
-        assert (
-            len(self.ds) >= 100
-        ), "you should have at least 100 images in your folder. at least 10k images recommended"
-
+        if len(self.ds) < 100:  # noqa: PLR2004
+            msg = (
+                f"You should have at least 100 images for training, at least 10k images recommended. "
+                f"Found {len(self.ds)}"
+            )
+            raise UserWarning(msg)
         dl = DataLoader(
             self.ds,
             batch_size=train_batch_size,
@@ -825,10 +874,13 @@ class Trainer:
 
         if self.calculate_fid:
             if not is_ddim_sampling:
-                self.accelerator.print(
-                    "WARNING: Robust FID computation requires a lot of generated samples and can therefore be very time consuming."
+                msg = (
+                    "WARNING: Robust FID computation requires a lot of generated samples "
+                    "and can therefore be very time consuming."
                     "Consider using DDIM sampling to save time."
                 )
+                logger.warning(msg, main_process_only=True)
+
             self.fid_scorer = FIDEvaluation(
                 batch_size=self.batch_size,
                 dl=self.dl,
@@ -841,10 +893,13 @@ class Trainer:
                 inception_block_idx=inception_block_idx,
             )
 
+        if save_best_and_latest_only and not calculate_fid:
+            msg = (
+                "`calculate_fid` must be True to provide a means for model evaluation for "
+                "`save_best_and_latest_only`."
+            )
+            raise ValueError(msg)
         if save_best_and_latest_only:
-            assert (
-                calculate_fid
-            ), "`calculate_fid` must be True to provide a means for model evaluation for `save_best_and_latest_only`."
             self.best_fid = 1e10  # infinite
 
         self.save_best_and_latest_only = save_best_and_latest_only
@@ -864,7 +919,7 @@ class Trainer:
             "model": self.accelerator.get_state_dict(self.model),
             "opt": self.opt.state_dict(),
             "ema": self.ema.state_dict(),
-            "scaler": self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
+            "scaler": (self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None),
             "version": __version__,
         }
 
@@ -900,7 +955,7 @@ class Trainer:
             self.ema.load_state_dict(data["ema"])
 
         if "version" in data:
-            print(f"loading from version {data['version']}")
+            logger.info(f"loading from version {data['version']}")
 
         if exists(self.accelerator.scaler) and exists(data["scaler"]):
             self.accelerator.scaler.load_state_dict(data["scaler"])
@@ -916,7 +971,8 @@ class Trainer:
                 all_data = accelerator.gather(data)
                 all_target = accelerator.gather(target)
                 self.loader_exporter.save_sample(
-                    str(self.results_folder / "reference"), torch.cat([all_data, all_target], dim=1)
+                    str(self.results_folder / "reference"),
+                    torch.cat([all_data, all_target], dim=1),
                 )
         with tqdm(
             initial=self.step,
@@ -955,15 +1011,10 @@ class Trainer:
                         milestone = self.step // self.save_and_sample_every
                         with torch.inference_mode():
                             batches = num_to_groups(self.num_samples, self.batch_size)
-                            all_images_list = list(
-                                map(
-                                    lambda n: self.ema.ema_model.sample(batch_size=n),
-                                    batches,
-                                )
-                            )
+                            all_images_list = [self.ema.ema_model.sample(batch_size=n) for n in batches]
 
                         all_images = torch.cat(all_images_list, dim=0)
-                        if self.channels <= 3:
+                        if self.channels <= 3:  # noqa: PLR2004
                             utils.save_image(
                                 all_images,
                                 str(self.results_folder / f"sample_{milestone:0{self.milestone_digits}d}.png"),
@@ -971,31 +1022,19 @@ class Trainer:
                             )
                         else:
                             self.exporter.save_sample(
-                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"), all_images
+                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"),
+                                all_images,
                             )
-                            # checkpoint_group = zarr.group(store=zarr.DirectoryStore(str(self.results_folder/ f"ckpt_{milestone}" /samples/"final_timestep.zarr")))
-                            # grid_lists = [
-                            #     utils.make_grid(
-                            #         all_images[:, ch : ch + 1, ...],
-                            #         nrow=int(math.sqrt(self.num_samples)),
-                            #     )[0]
-                            #     for ch in range(all_images.shape[1])
-                            # ]
-                            # color_grp = checkpoint_group.create_group("split_channels")
-                            # grid_grp = color_grp.create_group(f"grid_{self.num_samples}")
-                            # img_grp = grid_grp.create("00000")
-                            # grids = torch.stack(grid_lists, dim=0)
-                            # np_grids = grids.mul(255).clamp_(0, 255).to("cpu", torch.uint8).numpy()
-                            # #
-                            # img_grp.create_dataset(name=f"{milestone:03d}", data=np_grids)
 
                         # whether to calculate fid
                         if self.calculate_fid:
-                            if self.channels <= 3:
+                            if self.channels <= 3:  # noqa: PLR2004
                                 fid_score = self.fid_scorer.fid_score()
-                                accelerator.print(f"fid_score: {fid_score}")
+                                logger.info(f"fid_score: {fid_score}", main_process_only=True)
+
                             else:
-                                raise ValueError("FID score cannot be calculated for data with more than 3 channels.")
+                                msg = "FID score cannot be calculated for data with more than 3 channels."
+                                raise ValueError(msg)
 
                         if self.save_best_and_latest_only:
                             if self.best_fid > fid_score:
@@ -1006,5 +1045,6 @@ class Trainer:
                             self.save(milestone)
 
                 pbar.update(1)
+        logger.info("Training complete", main_process_only=True)
 
-        accelerator.print("training complete")
+
