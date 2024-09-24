@@ -159,15 +159,15 @@ class ZarrDataset(Dataset):
 class LabelRepresentation(str, Enum):
     BINARY = "binary"
     ONE_HOT = "one_hot"
-    CLASS_IDS = "class_ids"
+    CLASS_IDS = "class_ids" # labels are combined into a single array, each class has a unique id
 
 
 class RawChannelOptions(str, Enum):
-    APPEND = "append"
-    PREPEND = "prepend"
-    FIRST = "first"
-    SECOND = "second"
-    EXCLUDE = "exclude"
+    APPEND = "append" # append in the channel dimension as last channel
+    PREPEND = "prepend" # prepend in the channel dimension as first channel
+    FIRST = "first" # return tensor with raw data as first argument
+    SECOND = "second" # return tensor with raw data as second argument
+    EXCLUDE = "exclude" # don't return raw data
 
 
 class CellMapDatasets3Das2D(ConcatDataset):
@@ -430,6 +430,22 @@ class AnnotationCrop3Das2D(Dataset):
         label_representation: LabelRepresentation = "BINARY",
         random_crop: bool = True,
     ):
+        """_summary_
+
+        Args:
+            parent_data (CellMapDataset3Das2D): _description_
+            annotation_path (str): path to zarr that contains crop group
+            crop_name (str): name of the crop (and accordingly of the crop group)
+            dask_workers (int, optional): Number of workers to use for dask operations. Defaults to 0.
+            pre_load (bool, optional): Whether to load data at initialization. Defaults to False.
+            contrast_adjust (bool, optional): Whether to adjust contrast of raw data. Defaults to True.
+            raw_channel (RawChannelOptions, optional): Defines what to do with the raw channel, options are "APPEND", "PREPEND", "FIRST", "SECOND" and "EXCLUDE". Defaults to "APPEND".
+            label_representation (LabelRepresentation, optional): Defines how labels should be represented, options are "BINARY", "ONE_HOT" or "CLASS_IDS". Defaults to "BINARY".
+            random_crop (bool, optional): _description_. Defaults to True.
+
+        Raises:
+            ValueError: _description_
+        """
         self.parent_data = parent_data
         self.annotation_path = annotation_path
         self.crop_name = crop_name
@@ -465,8 +481,6 @@ class AnnotationCrop3Das2D(Dataset):
                     self._raw_xarray = read_xarray(
                         os.path.join(self.annotation_path, self.crop_name, "raw", mslvl), use_dask=not self.pre_load
                     )
-                    # if self.pre_load:
-                    #    self._raw_xarray = self._raw_xarray.compute(workers = self.dask_workers)
                 except ValueError as e:
                     if self.parent_data.raw_dataset is None:
                         msg = "Parent raw dataset is not set and no raw data found in crop"
@@ -594,8 +608,9 @@ class AnnotationCrop3Das2D(Dataset):
         return self.crop[os.path.join("labels", cls_name, self.scales[cls_name])]
 
     def class_xarray(self, cls_name: str) -> xr.DataArray:
-        if cls_name not in self._class_xarray:
+        if cls_name not in self._class_xarray: # has not yet been loaded
             if cls_name == "background" and "background" not in self.annotated_classes:
+                # infer background class
                 arrs = []
                 for cls_iter in self.parent_data.class_list:
                     cls_arr = self.class_xarray(cls_iter)
@@ -609,13 +624,11 @@ class AnnotationCrop3Das2D(Dataset):
                     self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name]
                 )
                 self._class_xarray[cls_name] = read_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
-            # if self.pre_load:
-            #    self._class_xarray[cls_name] = self._class_xarray[cls_name].compute(workers=self.dask_workers)
         return self._class_xarray[cls_name]
 
     @property
     def class_ids_xarray(self):
-        if self._class_ids_xarray is None:
+        if self._class_ids_xarray is None: # needs to be loaded
             arrs = []
             for cls_name in self.parent_data.class_list:
                 cls_arr = self.class_xarray(cls_name)
