@@ -515,7 +515,7 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def p_sample_loop(
         self,
-        shape,
+        shape, #(bs, ch, x, y)
         classes=None,
         return_all_timesteps=False,
         blockshape=None,
