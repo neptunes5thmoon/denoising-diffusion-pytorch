@@ -14,17 +14,21 @@ import xarray as xr
 import zarr
 from datatree import DataTree
 from fibsem_tools import read, read_xarray
+from cellmap_utils_kit.h5_xarray_reader import read_any_xarray
 from PIL import Image
 from torch import Tensor, nn
 from torch.utils.data import ConcatDataset, Dataset
 from torchvision.transforms import v2 as transforms
 
 from denoising_diffusion_pytorch.convenience import exists
+import json
 
 logger = logging.getLogger(__name__)
 
 
 def get_nested_attr(attrs, key: str | Sequence[str | int]) -> Any:
+    if isinstance(attrs, str):
+        attrs = json.loads(attrs)
     key_list: Sequence[str | int]
     if isinstance(key, str):
         key_list = key.split("/")
@@ -37,6 +41,8 @@ def get_nested_attr(attrs, key: str | Sequence[str | int]) -> Any:
 
 
 def has_nested_attr(attrs, key: str | Sequence[str | int]) -> bool:
+    if isinstance(attrs, str):
+        attrs = json.loads(attrs)
     key_list: Sequence[str | int]
     if isinstance(key, str):
         key_list = key.split("/")
@@ -260,6 +266,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
         label_representation: LabelRepresentation = LabelRepresentation.BINARY,
         random_crop: bool = True,
+        label_subgroup: str = "labels"
     ) -> None:
         self.pre_load = pre_load
         self.contrast_adjust = contrast_adjust
@@ -289,6 +296,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                     f"subset of `class_list` ({self.class_list}) and {{None}}."
                 )
                 raise ValueError(msg)
+        self.label_subgroup = label_subgroup
         self.crops = self._get_crop_list(crop_list)
 
         super().__init__(self.crops)
@@ -324,6 +332,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                         contrast_adjust=self.contrast_adjust,
                         raw_channel=self.raw_channel,
                         label_representation=self.label_representation,
+                        label_subgroup=self.label_subgroup,
                     )
                     if all(crop.sizes[dim] >= self.image_size for dim in ["x", "y"]) and all(
                         crop.is_fully_annotated(class_name) for class_name in self.class_list
@@ -365,6 +374,7 @@ class CellMapDataset3Das2D(ConcatDataset):
                     raw_channel=self.raw_channel,
                     label_representation=self.label_representation,
                     random_crop=self.random_crop,
+                    label_subgroup=self.label_subgroup
                 )
                 for crop_name in crop_list
             ]
@@ -381,7 +391,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         if self.raw_dataset is None:
             return None
         if self._raw_xarray is None:
-            self._raw_xarray = read_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
+            self._raw_xarray = read_any_xarray(os.path.join(self.data_path, self.raw_dataset, self.raw_scale))
         return self._raw_xarray
 
     @property
@@ -390,7 +400,7 @@ class CellMapDataset3Das2D(ConcatDataset):
             return None
         if self._raw_scale is None:
             arr_path = os.path.join(self.data_path, self.raw_dataset)
-            msarr = read_xarray(arr_path)
+            msarr = read_any_xarray(arr_path)
             if isinstance(msarr, datatree.DataTree):
                 scale_to_voxelsize = {}
                 for name, dtarr in msarr.children.items():
@@ -429,6 +439,7 @@ class AnnotationCrop3Das2D(Dataset):
         raw_channel: RawChannelOptions = "APPEND",
         label_representation: LabelRepresentation = "BINARY",
         random_crop: bool = True,
+        label_subgroup: str = "labels"
     ):
         """_summary_
 
@@ -450,14 +461,18 @@ class AnnotationCrop3Das2D(Dataset):
         self.annotation_path = annotation_path
         self.crop_name = crop_name
         self.crop = read(os.path.join(self.annotation_path, self.crop_name))
-        if not has_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation"]):
+        if label_subgroup is None or label_subgroup == "":
+            self.label_attrs = self.crop.attrs
+        else:
+            self.label_attrs = self.crop[label_subgroup].attrs
+        if not has_nested_attr(self.label_attrs, ["cellmap", "annotation"]):
             msg = f"Crop {crop_name} at {annotation_path} is not a cellmap annotation crop."
             raise ValueError(msg)
         self._scales: dict[str, str] | None = None
         self._sizes: None | Mapping[str, int] = None
         self._size: None | int = None
         self._coords: None | xr.Coordinates = None
-        self.annotated_classes = get_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation", "class_names"])
+        self.annotated_classes = get_nested_attr(self.label_attrs, ["cellmap", "annotation", "class_names"])
         self.class_list = list(set(self.annotated_classes).intersection(set(self.parent_data.class_list)))
         self._class_xarray: dict[str, xr.DataArray] = {}
         self._raw_xarray = None
@@ -470,6 +485,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.raw_channel = raw_channel
         self.label_representation = label_representation
         self.random_crop = random_crop
+        self.label_subgroup = label_subgroup
 
     @property
     def raw_xarray(self):
@@ -478,7 +494,7 @@ class AnnotationCrop3Das2D(Dataset):
                 try:
                     mslvl = self._infer_scale_level("raw")
 
-                    self._raw_xarray = read_xarray(
+                    self._raw_xarray = read_any_xarray(
                         os.path.join(self.annotation_path, self.crop_name, "raw", mslvl), use_dask=not self.pre_load
                     )
                 except ValueError as e:
@@ -497,12 +513,12 @@ class AnnotationCrop3Das2D(Dataset):
     def contrast_min(self):
         if self._contrast_min is None:
             if "raw" in self.crop:
-                raw = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
+                raw = read_any_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
             else:
                 if self.parent_data.raw_dataset is None:
                     msg = "Parent raw dataset is not set and no raw data found in crop"
                     raise ValueError(msg)
-                raw = read_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
+                raw = read_any_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
             if has_nested_attr(raw.attrs, ["cellmap", "contrast", "min"]):
                 self._contrast_min = get_nested_attr(raw.attrs, ["cellmap", "contrast", "min"])
             elif has_nested_attr(raw.attrs, ["contrastAdjustment", "min"]):
@@ -516,12 +532,12 @@ class AnnotationCrop3Das2D(Dataset):
     def contrast_max(self):
         if self._contrast_max is None:
             if "raw" in self.crop:
-                raw = read_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
+                raw = read_any_xarray(os.path.join(self.annotation_path, self.crop_name, "raw"))
             else:
                 if self.parent_data.raw_dataset is None:
                     msg = "Parent raw dataset is not set and no raw data found in crop"
                     raise ValueError(msg)
-                raw = read_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
+                raw = read_any_xarray(os.path.join(self.parent_data.data_path, self.parent_data.raw_dataset))
             if has_nested_attr(raw.attrs, ["cellmap", "contrast", "max"]):
                 self._contrast_max = get_nested_attr(raw.attrs, ["cellmap", "contrast", "max"])
             elif has_nested_attr(raw.attrs, ["contrastAdjustment", "max"]):
@@ -536,7 +552,7 @@ class AnnotationCrop3Das2D(Dataset):
         if self._scales is None:
             self._scales = {}
             for class_name in self.annotated_classes:
-                self._scales[class_name] = self._infer_scale_level(f"labels/{class_name}")
+                self._scales[class_name] = self._infer_scale_level(os.path.join(self.label_subgroup, class_name))
         return self._scales
 
     @property
@@ -584,7 +600,7 @@ class AnnotationCrop3Das2D(Dataset):
             msg = f"{ds_name} not found in {self}"
             raise ValueError(msg)
         arr_path = os.path.join(self.annotation_path, self.crop_name, ds_name)
-        msarr = read_xarray(arr_path)
+        msarr = read_any_xarray(arr_path)
         scale_to_voxelsize = {}
         for name, dtarr in msarr.children.items():
             arr = dtarr.data
@@ -599,13 +615,13 @@ class AnnotationCrop3Das2D(Dataset):
         raise ValueError(msg)
 
     def get_classes(self) -> list[str]:
-        return get_nested_attr(self.crop["labels"].attrs, ["cellmap", "annotation", "class_names"])
+        return get_nested_attr(self.label_attrs, ["cellmap", "annotation", "class_names"])
 
     def get_class_array(self, cls_name: str):
         if cls_name not in self.annotated_classes:
             msg = f"{cls_name} is not part of the annotated classes {self.annotated_classes}."
             raise ValueError(msg)
-        return self.crop[os.path.join("labels", cls_name, self.scales[cls_name])]
+        return self.crop[os.path.join(self.label_subgroup, cls_name, self.scales[cls_name])]
 
     def class_xarray(self, cls_name: str) -> xr.DataArray:
         if cls_name not in self._class_xarray: # has not yet been loaded
@@ -621,9 +637,9 @@ class AnnotationCrop3Das2D(Dataset):
                 raise ValueError(msg)
             else:
                 full_path = os.path.join(
-                    self.annotation_path, self.crop_name, "labels", cls_name, self.scales[cls_name]
+                    self.annotation_path, self.crop_name, self.label_subgroup, cls_name, self.scales[cls_name]
                 )
-                self._class_xarray[cls_name] = read_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
+                self._class_xarray[cls_name] = read_any_xarray(full_path, name=full_path, use_dask=not self.pre_load)  # type: ignore
         return self._class_xarray[cls_name]
 
     @property
@@ -855,47 +871,3 @@ class BatchedZarrSamples(Dataset):
                 raise ValueError(msg)
         return res
 
-
-if __name__ == "__main__":
-    data_path = "/nrs/cellmap/data/jrc_hela-2/jrc_hela-2.n5"
-    annotation_path = "/nrs/cellmap/data/jrc_hela-2/staging/groundtruth.zarr"
-    ds = CellMapDataset3Das2D(
-        data_path,
-        [
-            "ecs",
-            "pm",
-            "mito_mem",
-            "mito_lum",
-            "mito_ribo",
-            "golgi_mem",
-            "golgi_lum",
-            "ves_mem",
-            "ves_lum",
-            "endo_mem",
-            "endo_lum",
-            "lyso_mem",
-            "lyso_lum",
-            "ld_mem",
-            "ld_lum",
-            "er_mem",
-            "er_lum",
-            "eres_mem",
-            "eres_lum",
-            "ne_mem",
-            "ne_lum",
-            "np_out",
-            "np_in",
-            "hchrom",
-            "nhchrom",
-            "echrom",
-            "nechrom",
-            "nucpl",
-            "nucleo",
-            "mt_out",
-            "mt_in",
-        ],
-        64,
-        {"x": 4, "y": 4, "z": 4},
-        annotation_path=annotation_path,
-        crop_list=["crop1", "crop113"],
-    )

@@ -34,10 +34,11 @@ dependencies = [
     "torch",
     "torchvision",
     "tqdm",
-    "fibsem-tools>=6.0",
+    "fibsem-tools@git+ssh://git@github.com/neptunes5thmoon/fibsem-tools.git@feat/deep_tree",
     "zarr",
     "mlflow",
-    "distinctipy"
+    "distinctipy",
+    "cellmap-utils-kit@git+ssh://git@github.com/saalfeldlab/cellmap-utils-kit.git"
 ]
 requires-python = ">=3.7"
 
