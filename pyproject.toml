@@ -50,6 +50,7 @@ path = "src/denoising_diffusion_pytorch/version.py"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+source-layout = "src"
 
 [tool.hatch.envs.default]
 dependencies = ["coverage[toml]>=6.5","pytest"]
