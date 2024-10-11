@@ -38,7 +38,7 @@ dependencies = [
     "zarr",
     "mlflow",
     "distinctipy",
-    "cellmap-utils-kit@git+ssh://git@github.com/saalfeldlab/cellmap-utils-kit.git@654fb48888fed4a829a0255e5402b94b67e62e1e"
+    "cellmap-utils-kit@git+ssh://git@github.com/saalfeldlab/cellmap-utils-kit.git"
 ]
 requires-python = ">=3.7"
 
