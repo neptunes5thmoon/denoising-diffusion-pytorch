@@ -299,7 +299,7 @@ class CellMapDataset3Das2D(ConcatDataset):
 
     @property
     def raw_xarray(self) -> None | xr.DataArray | DataTree:
-        if "raw" not in self.datainfo:
+        if "raw" not in self.datainfo or self.datainfo["raw"] is None:
             return None
         if self._raw_xarray is None:
             self._raw_xarray = read_any_xarray(Path(self.datainfo["raw"]) / self.raw_scale)
@@ -307,7 +307,7 @@ class CellMapDataset3Das2D(ConcatDataset):
 
     @property
     def raw_scale(self) -> str | None:
-        if "raw" not in self.datainfo:
+        if "raw" not in self.datainfo or self.datainfo["raw"] is None:
             return None
         if self._raw_scale is None:
             arr_path = Path(self.datainfo["raw"])
