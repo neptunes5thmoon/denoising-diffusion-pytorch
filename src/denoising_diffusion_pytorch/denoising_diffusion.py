@@ -956,6 +956,7 @@ class Trainer:
 
         dl = self.accelerator.prepare(dl)
         self.dl = cycle(dl)
+        self.val_dl = None
 
         # optimizer
 
