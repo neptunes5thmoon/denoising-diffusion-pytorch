@@ -13,6 +13,7 @@ from denoising_diffusion_pytorch.datasets import (
     BatchedZarrSamples,
     CellMapDataset3Das2D,
     CellMapDatasets3Das2D,
+    ClassOptions,
     LabelRepresentation,
     RawChannelOptions,
     SimpleDataset,
