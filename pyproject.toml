@@ -54,9 +54,6 @@ source-layout = "src"
 
 [tool.hatch.envs.default]
 dependencies = ["coverage[toml]>=6.5","pytest"]
-type = "conda"
-command = "mamba"
-conda-forge = true
 [tool.hatch.envs.default.static]
 dev-mode = true
 
@@ -67,9 +64,6 @@ cov-report = ["- coverage combine", "coverage report"]
 cov = ["test-cov", "cov-report"]
 
 [tool.hatch.envs.lint]
-type = "conda"
-command = "mamba"
-conda-forge = true
 detached = true
 dependencies = ["black>23.1.0", "mypy>=1.0.0", "ruff>=0.0.243", "isort"]
 
