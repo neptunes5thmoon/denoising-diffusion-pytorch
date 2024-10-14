@@ -177,6 +177,8 @@ class RawChannelOptions(str, Enum):
     SECOND = "second" # return tensor with raw data as second argument
     EXCLUDE = "exclude" # don't return raw data
 
+class ClassOptions(str, Enum):
+    DATASET = "dataset"
 
 class CellMapDatasets3Das2D(ConcatDataset):
     def __init__(
@@ -194,15 +196,19 @@ class CellMapDatasets3Das2D(ConcatDataset):
         raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
         label_representation: LabelRepresentation = LabelRepresentation.BINARY,
         random_crop: bool = True,
+        classes: ClassOptions | None = None
     ):
         cellmap_datasets = []
         with open(data_config) as f:
             datasets = yaml.safe_load(f)["datasets"]
-        for dataname, datainfo in datasets.items():
+        self.classes = classes
+        self.class_idx_to_name = {}
+        for dataset_idx, (dataname, datainfo) in enumerate(datasets.items()):
             cellmap_datasets.append(
                 CellMapDataset3Das2D(
                     dataname,
                     datainfo,
+                    dataset_idx,
                     class_list,
                     image_size,
                     scale,
@@ -214,8 +220,11 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     raw_channel=raw_channel,
                     label_representation=label_representation,
                     random_crop=random_crop,
+                    classes=classes
                 )
             )
+            if classes == ClassOptions.DATASET:
+                self.class_idx_to_name[dataset_idx] = dataname
         super().__init__(cellmap_datasets)
 
 
@@ -224,6 +233,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         self,
         dataname: str,
         datainfo: dict,
+        dataset_idx: int,
         class_list: Sequence[str],
         image_size: int,
         scale: dict[str, int],
@@ -236,7 +246,8 @@ class CellMapDataset3Das2D(ConcatDataset):
         raw_channel: RawChannelOptions = RawChannelOptions.APPEND,
         label_representation: LabelRepresentation = LabelRepresentation.BINARY,
         random_crop: bool = True,
-        label_subgroup: str = "labels"
+        label_subgroup: str = "labels",
+        classes: ClassOptions | None = None,
     ) -> None:
         self.pre_load = pre_load
         self.contrast_adjust = contrast_adjust
@@ -256,6 +267,8 @@ class CellMapDataset3Das2D(ConcatDataset):
         self.allow_single_class_crops: set[None | str] = set()
         self.label_subgroup = label_subgroup
         self.crops = self._get_crop_list(datainfo)
+        self.classes = classes
+        self.dataset_idx = dataset_idx
 
         super().__init__(self.crops)
         self.transform = transforms.Compose(
@@ -285,7 +298,8 @@ class CellMapDataset3Das2D(ConcatDataset):
                     raw_channel=self.raw_channel,
                     label_representation=self.label_representation,
                     random_crop=self.random_crop,
-                    label_subgroup=self.label_subgroup
+                    label_subgroup=self.label_subgroup,
+                    classes = self.classes
                 )
                 for crop_name in datainfo["crops"]
             ]
@@ -329,7 +343,8 @@ class AnnotationCrop3Das2D(Dataset):
         raw_channel: RawChannelOptions = "APPEND",
         label_representation: LabelRepresentation = "BINARY",
         random_crop: bool = True,
-        label_subgroup: str = "labels"
+        label_subgroup: str = "labels",
+        classes: ClassOptions | None = None
     ):
         """_summary_
 
@@ -343,6 +358,7 @@ class AnnotationCrop3Das2D(Dataset):
             raw_channel (RawChannelOptions, optional): Defines what to do with the raw channel, options are "APPEND", "PREPEND", "FIRST", "SECOND" and "EXCLUDE". Defaults to "APPEND".
             label_representation (LabelRepresentation, optional): Defines how labels should be represented, options are "BINARY", "ONE_HOT" or "CLASS_IDS". Defaults to "BINARY".
             random_crop (bool, optional): _description_. Defaults to True.
+            classes (ClassOptions, optional): If not None, defines what classes should be used for classifier free guidance. Options are "DATASET"
 
         Raises:
             ValueError: _description_
@@ -376,6 +392,7 @@ class AnnotationCrop3Das2D(Dataset):
         self.label_representation = label_representation
         self.random_crop = random_crop
         self.label_subgroup = label_subgroup
+        self.classes = classes
 
     @property
     def raw_xarray(self):
@@ -617,7 +634,8 @@ class AnnotationCrop3Das2D(Dataset):
             for cls_name in self.parent_data.class_list:
                 cls_arr = self.class_xarray(cls_name).isel(vox_slice)
                 arrs.append(cls_arr.astype("float32"))
-
+        if self.classes == ClassOptions.DATASET:
+            cls_idx = self.parent_data.dataset_idx
         if self.raw_channel == RawChannelOptions.EXCLUDE:
             for k, arr in enumerate(arrs):
                 if arr.sizes["x"] < self.parent_data.image_size or arr.sizes["y"] < self.parent_data.image_size:
@@ -687,6 +705,11 @@ class AnnotationCrop3Das2D(Dataset):
             else:
                 msg = f"Unknown option for handling raw channel: {self.raw_channel}"
                 raise ValueError(msg)
+        if self.classes is None:
+            if isinstance(res, tuple):
+                res = (*res, cls_idx)
+            else:
+                res = (res, cls_idx)
         return (
             res  # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
         )
