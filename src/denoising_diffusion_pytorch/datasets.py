@@ -266,11 +266,14 @@ class CellMapDataset3Das2D(ConcatDataset):
         self._raw_xarray: xr.DataArray | None = None
         self.allow_single_class_crops: set[None | str] = set()
         self.label_subgroup = label_subgroup
-        self.crops = self._get_crop_list(datainfo)
         self.classes = classes
         self.dataset_idx = dataset_idx
 
+        # construct list of crops
+        self.crops = self._get_crop_list(datainfo)
+        # make the concatenated torch.Dataset
         super().__init__(self.crops)
+
         self.transform = transforms.Compose(
             [
                 transforms.ToImage(),
