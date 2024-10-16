@@ -708,7 +708,7 @@ class AnnotationCrop3Das2D(Dataset):
             else:
                 msg = f"Unknown option for handling raw channel: {self.raw_channel}"
                 raise ValueError(msg)
-        if self.classes is None:
+        if self.classes is not None:
             if isinstance(res, tuple):
                 res = (*res, cls_idx)
             else:
