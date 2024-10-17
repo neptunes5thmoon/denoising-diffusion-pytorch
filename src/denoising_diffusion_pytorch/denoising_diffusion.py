@@ -43,12 +43,14 @@ def gaussian_weights(width, height, var=0.01):
     """Generates a gasian mask of weights for tile contributions"""
     midpoint = (width - 1) / 2  # -1 because index goes from 0 to latent_width - 1
     x_probs = [
-        np.exp(-(x - midpoint) * (x - midpoint) / (width * width) / (2 * var)) / np.sqrt(2 * np.pi * var)
+        np.exp(-(x - midpoint) * (x - midpoint) / (width * width) / (2 * var))
+        / np.sqrt(2 * np.pi * var)
         for x in range(width)
     ]
     midpoint = height / 2
     y_probs = [
-        np.exp(-(y - midpoint) * (y - midpoint) / (height * height) / (2 * var)) / np.sqrt(2 * np.pi * var)
+        np.exp(-(y - midpoint) * (y - midpoint) / (height * height) / (2 * var))
+        / np.sqrt(2 * np.pi * var)
         for y in range(height)
     ]
     weights = np.outer(y_probs, x_probs)
@@ -108,7 +110,9 @@ def sigmoid_beta_schedule(timesteps, start=-3, end=3, tau=1):
     t = torch.linspace(0, timesteps, steps, dtype=torch.float64) / timesteps
     v_start = torch.tensor(start / tau).sigmoid()
     v_end = torch.tensor(end / tau).sigmoid()
-    alphas_cumprod = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (v_end - v_start)
+    alphas_cumprod = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (
+        v_end - v_start
+    )
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0, 0.999)
@@ -197,19 +201,37 @@ class GaussianDiffusion(nn.Module):
 
         self.register_buffer("betas", betas.to(torch.float32))
         self.register_buffer("alphas_cumprod", alphas_cumprod.to(torch.float32))
-        self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev.to(torch.float32))
+        self.register_buffer(
+            "alphas_cumprod_prev", alphas_cumprod_prev.to(torch.float32)
+        )
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
 
-        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod).to(torch.float32))
-        self.register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod).to(torch.float32))
-        self.register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod).to(torch.float32))
-        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod).to(torch.float32))
-        self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1).to(torch.float32))
+        self.register_buffer(
+            "sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod).to(torch.float32)
+        )
+        self.register_buffer(
+            "sqrt_one_minus_alphas_cumprod",
+            torch.sqrt(1.0 - alphas_cumprod).to(torch.float32),
+        )
+        self.register_buffer(
+            "log_one_minus_alphas_cumprod",
+            torch.log(1.0 - alphas_cumprod).to(torch.float32),
+        )
+        self.register_buffer(
+            "sqrt_recip_alphas_cumprod",
+            torch.sqrt(1.0 / alphas_cumprod).to(torch.float32),
+        )
+        self.register_buffer(
+            "sqrt_recipm1_alphas_cumprod",
+            torch.sqrt(1.0 / alphas_cumprod - 1).to(torch.float32),
+        )
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
-        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
 
@@ -223,11 +245,17 @@ class GaussianDiffusion(nn.Module):
         )
         self.register_buffer(
             "posterior_mean_coef1",
-            (betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)).to(torch.float32),
+            (betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)).to(
+                torch.float32
+            ),
         )
         self.register_buffer(
             "posterior_mean_coef2",
-            ((1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod)).to(torch.float32),
+            (
+                (1.0 - alphas_cumprod_prev)
+                * torch.sqrt(alphas)
+                / (1.0 - alphas_cumprod)
+            ).to(torch.float32),
         )
         self.immiscible = immiscible
 
@@ -247,11 +275,15 @@ class GaussianDiffusion(nn.Module):
             maybe_clipped_snr.clamp_(max=min_snr_gamma)
 
         if objective == "pred_noise":
-            self.register_buffer("loss_weight", (maybe_clipped_snr / snr).to(torch.float32))
+            self.register_buffer(
+                "loss_weight", (maybe_clipped_snr / snr).to(torch.float32)
+            )
         elif objective == "pred_x0":
             self.register_buffer("loss_weight", maybe_clipped_snr.to(torch.float32))
         elif objective == "pred_v":
-            self.register_buffer("loss_weight", (maybe_clipped_snr / (snr + 1)).to(torch.float32))
+            self.register_buffer(
+                "loss_weight", (maybe_clipped_snr / (snr + 1)).to(torch.float32)
+            )
 
         if channel_weights is not None:
             if model.channels != len(channel_weights):
@@ -260,7 +292,9 @@ class GaussianDiffusion(nn.Module):
                     f" but got {channel_weights} of length {len(channel_weights)}"
                 )
                 raise ValueError(msg)
-            channel_weights_t = torch.nn.functional.normalize(torch.FloatTensor(channel_weights), p=1, dim=0)
+            channel_weights_t = torch.nn.functional.normalize(
+                torch.FloatTensor(channel_weights), p=1, dim=0
+            )
             self.register_buffer("channel_weights", channel_weights_t.to(torch.float32))
         else:
             self.channel_weights = None
@@ -281,9 +315,9 @@ class GaussianDiffusion(nn.Module):
         )
 
     def predict_noise_from_start(self, x_t, t, x0):
-        return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / extract(
-            self.sqrt_recipm1_alphas_cumprod, t, x_t.shape
-        )
+        return (
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
+        ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
 
     def predict_v(self, x_start, t, noise):
         return (
@@ -303,7 +337,9 @@ class GaussianDiffusion(nn.Module):
             + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
-        posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
+        posterior_log_variance_clipped = extract(
+            self.posterior_log_variance_clipped, t, x_t.shape
+        )
         return (
             posterior_mean,
             posterior_variance,
@@ -321,12 +357,19 @@ class GaussianDiffusion(nn.Module):
         clip_x_start=False,
         rederive_pred_noise=False,
     ):
-        maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
+        maybe_clip = (
+            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
+        )
         if classes is None:
             model_output = self.model(x, t, x_self_cond)
         else:
             model_output, model_output_null = self.model.forward_with_cond_scale(
-                x, t, x_self_cond=x_self_cond, classes=classes, cond_scale=cond_scale, rescaled_phi=rescaled_phi
+                x,
+                t,
+                x_self_cond=x_self_cond,
+                classes=classes,
+                cond_scale=cond_scale,
+                rescaled_phi=rescaled_phi,
             )
 
         if self.objective == "pred_noise":
@@ -346,32 +389,52 @@ class GaussianDiffusion(nn.Module):
             if self.use_cfg_plus_plus and classes is not None:
                 pred_noise = self.predict_noise_from_start(x, t, x_start)
             else:
-                pred_noise = self.predict_noise_from_start(x, t, maybe_clip(model_output_null))
+                pred_noise = self.predict_noise_from_start(
+                    x, t, maybe_clip(model_output_null)
+                )
 
         elif self.objective == "pred_v":
             v = model_output
             x_start = self.predict_start_from_v(x, t, v)
             x_start = maybe_clip(x_start)
             if self.use_cfg_plus_plus and classes is not None:
-                x_start_for_pred_noise = self.predict_start_from_v(x, t, model_output_null)
-                pred_noise = self.predict_noise_from_start(x, t, maybe_clip(x_start_for_pred_noise))
+                x_start_for_pred_noise = self.predict_start_from_v(
+                    x, t, model_output_null
+                )
+                pred_noise = self.predict_noise_from_start(
+                    x, t, maybe_clip(x_start_for_pred_noise)
+                )
             else:
                 pred_noise = self.predict_noise_from_start(x, t, x_start)
 
         return ModelPrediction(pred_noise, x_start)
 
     def p_mean_variance(
-        self, x, t, x_self_cond=None, classes=None, cond_scale=6.0, rescaled_phi=0.7, clip_denoised=True
+        self,
+        x,
+        t,
+        x_self_cond=None,
+        classes=None,
+        cond_scale=6.0,
+        rescaled_phi=0.7,
+        clip_denoised=True,
     ):
         preds = self.model_predictions(
-            x, t, x_self_cond=x_self_cond, classes=classes, cond_scale=cond_scale, rescaled_phi=rescaled_phi
+            x,
+            t,
+            x_self_cond=x_self_cond,
+            classes=classes,
+            cond_scale=cond_scale,
+            rescaled_phi=rescaled_phi,
         )
         x_start = preds.pred_x_start
 
         if clip_denoised:
             x_start.clamp_(-1.0, 1.0)
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
+            x_start=x_start, x_t=x, t=t
+        )
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.inference_mode()
@@ -467,7 +530,11 @@ class GaussianDiffusion(nn.Module):
                 batch_cond = None
             # process each block
             processed_batch, x_start = sampling_func(
-                batch_data, t=t, x_self_cond=batch_cond, noise=batch_noise, **sample_fn_kwargs
+                batch_data,
+                t=t,
+                x_self_cond=batch_cond,
+                noise=batch_noise,
+                **sample_fn_kwargs,
             )
             # weight each block
             processed_batch = processed_batch * block_weight
@@ -515,7 +582,7 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def p_sample_loop(
         self,
-        shape, #(bs, ch, x, y)
+        shape,  # (bs, ch, x, y)
         classes=None,
         return_all_timesteps=False,
         blockshape=None,
@@ -538,7 +605,9 @@ class GaussianDiffusion(nn.Module):
                 n_batch_blocks = 1
             overlap = int(blockshape[2] / 2)
             chunk_weight = gaussian_weights(blockshape[2], blockshape[3], var=var)
-            chunk_weight_norm = chunk_weight + np.roll(chunk_weight, (overlap, overlap), (0, 1))
+            chunk_weight_norm = chunk_weight + np.roll(
+                chunk_weight, (overlap, overlap), (0, 1)
+            )
             chunk_weight = chunk_weight / chunk_weight_norm
             chunk_weight = torch.Tensor(chunk_weight).to(device)
 
@@ -559,7 +628,12 @@ class GaussianDiffusion(nn.Module):
             if blockshape is None:  # Single-shot prediction
                 self_cond = x_start if self.self_condition else None
                 img, x_start = self.p_sample(
-                    img, t, x_self_cond=self_cond, classes=classes, rescaled_phi=rescaled_phi, cond_scale=cond_scale
+                    img,
+                    t,
+                    x_self_cond=self_cond,
+                    classes=classes,
+                    rescaled_phi=rescaled_phi,
+                    cond_scale=cond_scale,
                 )
             else:
                 noise = torch.randn(shape, device=self.device)  # initalize noise
@@ -579,7 +653,11 @@ class GaussianDiffusion(nn.Module):
                 img2, x_start2 = self.blockwise_sample(
                     torch.roll(img, (overlap, overlap), (2, 3)),
                     torch.roll(noise, (overlap, overlap), (2, 3)),
-                    (torch.roll(x_start, (overlap, overlap), (2, 3)) if x_start is not None else None),
+                    (
+                        torch.roll(x_start, (overlap, overlap), (2, 3))
+                        if x_start is not None
+                        else None
+                    ),
                     chunk_weight,
                     blockshape,
                     self.p_sample,
@@ -589,7 +667,9 @@ class GaussianDiffusion(nn.Module):
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )  # run inference in blocks, but offset by overlap in x,y
-                img2 = torch.roll(img2, (-overlap, -overlap), (2, 3))  # undo offset by overlap in x, y
+                img2 = torch.roll(
+                    img2, (-overlap, -overlap), (2, 3)
+                )  # undo offset by overlap in x, y
                 if self.self_condition:  # only need this if self conditioning is on
                     x_start = x_start1 + x_start2
                 img = img1 + img2  # smooth out prediction across blocks
@@ -634,7 +714,10 @@ class GaussianDiffusion(nn.Module):
         else:
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
-            sigma = self.ddim_sampling_eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            sigma = (
+                self.ddim_sampling_eta
+                * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            )
             c = (1 - alpha_next - sigma**2).sqrt()
             if noise is None:
                 noise = torch.randn_like(x)
@@ -666,7 +749,9 @@ class GaussianDiffusion(nn.Module):
                 n_batch_blocks = 1
             overlap = int(blockshape[2] / 2)
             chunk_weight = gaussian_weights(blockshape[2], blockshape[3], var=var)
-            chunk_weight_norm = chunk_weight + np.roll(chunk_weight, (overlap, overlap), (0, 1))
+            chunk_weight_norm = chunk_weight + np.roll(
+                chunk_weight, (overlap, overlap), (0, 1)
+            )
             chunk_weight = chunk_weight / chunk_weight_norm
             chunk_weight = torch.Tensor(chunk_weight).to(self.device)
 
@@ -674,7 +759,9 @@ class GaussianDiffusion(nn.Module):
             -1, self.num_timesteps - 1, steps=self.sampling_timesteps + 1
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
-        time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+        time_pairs = list(
+            zip(times[:-1], times[1:])
+        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn(shape, device=self.device)
 
@@ -740,13 +827,19 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def sample(self, batch_size=16, return_all_timesteps=False, **kwargs):
         image_size, channels = self.image_size, self.channels
-        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample_loop
+        sample_fn = (
+            self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample_loop
+        )
         return sample_fn(
-            (batch_size, channels, image_size, image_size), return_all_timesteps=return_all_timesteps, **kwargs
+            (batch_size, channels, image_size, image_size),
+            return_all_timesteps=return_all_timesteps,
+            **kwargs,
         )
 
     @torch.inference_mode()
-    def interpolate(self, x1, x2, classes, t=None, lam=0.5, cond_scale=6.0, rescaled_phi=0.7):
+    def interpolate(
+        self, x1, x2, classes, t=None, lam=0.5, cond_scale=6.0, rescaled_phi=0.7
+    ):
         b, *_, device = *x1.shape, x1.device
         t = default(t, self.num_timesteps - 1)
         if x1.shape != x2.shape:
@@ -766,12 +859,21 @@ class GaussianDiffusion(nn.Module):
             total=t,
         ):
             self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, i, self_cond, classes, cond_scale=cond_scale, rescaled_phi=rescaled_phi)
+            img, x_start = self.p_sample(
+                img,
+                i,
+                self_cond,
+                classes,
+                cond_scale=cond_scale,
+                rescaled_phi=rescaled_phi,
+            )
 
         return img
 
     def noise_assignment(self, x_start, noise):
-        x_start, noise = tuple(rearrange(t, "b ... -> b (...)") for t in (x_start, noise))
+        x_start, noise = tuple(
+            rearrange(t, "b ... -> b (...)") for t in (x_start, noise)
+        )
         dist = torch.cdist(x_start, noise)
         _, assign = linear_sum_assignment(dist.cpu())
         return torch.from_numpy(assign).to(dist.device)
@@ -789,14 +891,18 @@ class GaussianDiffusion(nn.Module):
             + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, classes=None, noise=None, offset_noise_strength=None):
+    def p_losses(
+        self, x_start, t, classes=None, noise=None, offset_noise_strength=None
+    ):
         b, c, h, w = x_start.shape
 
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
-        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
+        offset_noise_strength = default(
+            offset_noise_strength, self.offset_noise_strength
+        )
 
         if offset_noise_strength > 0.0:
             offset_noise = torch.randn(x_start.shape[:2], device=self.device)
@@ -965,7 +1071,9 @@ class Trainer:
         # for logging results in a folder periodically
 
         if self.accelerator.is_main_process:
-            self.ema = EMA(diffusion_model, beta=ema_decay, update_every=ema_update_every)
+            self.ema = EMA(
+                diffusion_model, beta=ema_decay, update_every=ema_update_every
+            )
             self.ema.to(self.device)
             self.sampler = self.ema.ema_model
 
@@ -1031,7 +1139,11 @@ class Trainer:
             "model": self.accelerator.get_state_dict(self.model),
             "opt": self.opt.state_dict(),
             "ema": self.ema.state_dict(),
-            "scaler": (self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None),
+            "scaler": (
+                self.accelerator.scaler.state_dict()
+                if exists(self.accelerator.scaler)
+                else None
+            ),
             "version": __version__,
         }
 
@@ -1041,7 +1153,9 @@ class Trainer:
         torch.save(data, model_path)
 
     def load_last(self):
-        milestones = [int(ckpt.split("_")[1]) for ckpt in os.listdir(self.results_folder)]
+        milestones = [
+            int(ckpt.split("_")[1]) for ckpt in os.listdir(self.results_folder)
+        ]
         if len(milestones) > 0:
             self.load(max(milestones))
 
@@ -1118,23 +1232,33 @@ class Trainer:
                 if accelerator.is_main_process:
                     self.ema.update()
 
-                    if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
+                    if self.step != 0 and divisible_by(
+                        self.step, self.save_and_sample_every
+                    ):
                         self.ema.ema_model.eval()
                         milestone = self.step // self.save_and_sample_every
                         with torch.inference_mode():
                             batches = num_to_groups(self.num_samples, self.batch_size)
-                            all_images_list = [self.ema.ema_model.sample(batch_size=n) for n in batches]
+                            all_images_list = [
+                                self.ema.ema_model.sample(batch_size=n) for n in batches
+                            ]
 
                         all_images = torch.cat(all_images_list, dim=0)
                         if self.channels <= 3:  # noqa: PLR2004
                             utils.save_image(
                                 all_images,
-                                str(self.results_folder / f"sample_{milestone:0{self.milestone_digits}d}.png"),
+                                str(
+                                    self.results_folder
+                                    / f"sample_{milestone:0{self.milestone_digits}d}.png"
+                                ),
                                 nrow=int(math.sqrt(self.num_samples)),
                             )
                         else:
                             self.exporter.save_sample(
-                                str(self.results_folder / f"ckpt_{milestone:0{self.milestone_digits}d}"),
+                                str(
+                                    self.results_folder
+                                    / f"ckpt_{milestone:0{self.milestone_digits}d}"
+                                ),
                                 all_images,
                             )
 
@@ -1142,7 +1266,9 @@ class Trainer:
                         if self.calculate_fid:
                             if self.channels <= 3:  # noqa: PLR2004
                                 fid_score = self.fid_scorer.fid_score()
-                                logger.info(f"fid_score: {fid_score}", main_process_only=True)
+                                logger.info(
+                                    f"fid_score: {fid_score}", main_process_only=True
+                                )
 
                             else:
                                 msg = "FID score cannot be calculated for data with more than 3 channels."
@@ -1165,11 +1291,19 @@ if __name__ == "__main__":
 
     logger.info("With classes")
     num_classes = 10
-    model = Unet(dim=64, dim_mults=(1, 2, 4, 8), num_classes=num_classes, cond_drop_prob=0.5, channels=6)
-    diffusion = GaussianDiffusion(model, image_size=128, timesteps=1000, sampling_timesteps=250).cuda()
+    model = Unet(
+        dim=64,
+        dim_mults=(1, 2, 4, 8),
+        num_classes=num_classes,
+        cond_drop_prob=1,
+        channels=6,
+    )
+    diffusion = GaussianDiffusion(
+        model, image_size=128, timesteps=1000, sampling_timesteps=250
+    ).cuda()
     training_images = torch.randn((8, 6, 128, 128)).cuda()
     image_classes = torch.randint(0, num_classes, (8,)).cuda()
-    loss = diffusion(training_images, classes=image_classes)
+    loss = diffusion(training_images, image_classes)
     loss.backward()
     sample_classes = torch.randint(0, num_classes, (20,)).cuda()
     sampled_images = diffusion.sample(20, classes=sample_classes)
@@ -1180,7 +1314,9 @@ if __name__ == "__main__":
     # Without classes
     logger.info("Without classes")
     model = Unet(dim=64, dim_mults=(1, 2, 4, 8), cond_drop_prob=0.5, channels=6)
-    diffusion = GaussianDiffusion(model, image_size=128, timesteps=1000, sampling_timesteps=250).cuda()
+    diffusion = GaussianDiffusion(
+        model, image_size=128, timesteps=1000, sampling_timesteps=250
+    ).cuda()
     training_images = torch.randn((8, 6, 128, 128)).cuda()
     loss = diffusion(training_images)
     loss.backward()
