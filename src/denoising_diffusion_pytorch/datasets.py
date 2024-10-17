@@ -378,7 +378,7 @@ class CellMapDataset3Das2D(ConcatDataset):
         if self.classes is None:
             el = transformed
         else:
-            el = (transformed, el[-1])
+            el = (*transformed, el[-1])
         return el
 
 
