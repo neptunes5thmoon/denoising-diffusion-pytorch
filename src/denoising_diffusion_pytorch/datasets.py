@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import yaml
+import random
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -13,6 +13,7 @@ import cellmap_utils_kit
 import dask
 import datatree
 import numpy as np
+import torch
 import xarray as xr
 import yaml
 import zarr
@@ -361,7 +362,25 @@ class CellMapDataset3Das2D(ConcatDataset):
         return self._raw_scale
 
     def __getitem__(self, idx: int) -> Tensor:
-        return self.transform(super().__getitem__(idx))
+        el = super().__getitem__(idx)
+        if (
+            self.raw_channel == RawChannelOptions.FIRST
+            or self.raw_channel == RawChannelOptions.SECOND
+        ):
+            seed = random.randint(0, 2**32 - 1)
+            torch.manual_seed(seed)
+            transformed_0 = self.transform(el[0])
+            torch.manual_seed(seed)
+            transformed_1 = self.transform(el[1])
+            transformed = (transformed_0, transformed_1)
+        else:
+            transformed = (self.transform(el[0]),)
+        if self.classes is None:
+            el = transformed
+        else:
+            el = (transformed, el[-1])
+        return el
+
 
 class AnnotationCrop3Das2D(Dataset):
     def __init__(
@@ -730,7 +749,9 @@ class AnnotationCrop3Das2D(Dataset):
                         }
                     )
 
-            res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+            res = (
+                dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
+            )
         else:
             spatial_slice = {
                 dim: slice(
@@ -781,31 +802,50 @@ class AnnotationCrop3Das2D(Dataset):
                 )
             if self.raw_channel == RawChannelOptions.APPEND:
                 arrs.append(raw_arr)
-                res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
+                res = (
+                    dask.array.stack(arrs, axis=-1).compute(
+                        num_workers=self.dask_workers
+                    ),
+                )
             elif self.raw_channel == RawChannelOptions.PREPEND:
                 arrs = [raw_arr, *arrs]
-                res = dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers)
-            elif self.raw_channel == RawChannelOptions.FIRST:
                 res = (
-                    np.expand_dims(raw_arr.data, -1),
-                    dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
+                    dask.array.stack(arrs, axis=-1).compute(
+                        num_workers=self.dask_workers
+                    ),
+                )
+            elif self.raw_channel == RawChannelOptions.FIRST:
+                if self.pre_load:
+                    raw_np = np.expand_dims(raw_arr.data, -1)
+                else:
+                    raw_np = np.expand_dims(raw_arr.data, -1).compute(
+                        num_workers=self.dask_workers
+                    )
+                res = (
+                    raw_np,
+                    dask.array.stack(arrs, axis=-1).compute(
+                        num_workers=self.dask_workers
+                    ),
                 )
             elif self.raw_channel == RawChannelOptions.SECOND:
+                if self.pre_load:
+                    raw_np = np.expand_dims(raw_arr.data, -1)
+                else:
+                    raw_np = np.expand_dims(raw_arr.data, -1).compute(
+                        num_workers=self.dask_workers
+                    )
                 res = (
-                    dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
-                    np.expand_dims(raw_arr.data, -1),
+                    dask.array.stack(arrs, axis=-1).compute(
+                        num_workers=self.dask_workers
+                    ),
+                    raw_np,
                 )
             else:
                 msg = f"Unknown option for handling raw channel: {self.raw_channel}"
                 raise ValueError(msg)
         if self.classes is not None:
-            if isinstance(res, tuple):
-                res = (*res, cls_idx)
-            else:
-                res = (res, cls_idx)
-        return (
-            res  # shape (self.parent_data.image_size, self.parent_data.image_size, len(self.parent_data.class_list)+1)
-        )
+            res = (*res, cls_idx)
+        return res
 
 
 class BatchedZarrSamples(Dataset):
