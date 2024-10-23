@@ -1209,10 +1209,10 @@ class Trainer:
                 total_loss = 0.0
 
                 for _ in range(self.gradient_accumulate_every):
-                    data = [d.to(device) for d in next(self.dl)]
+                    data = tuple(d.to(device) for d in next(self.dl))
 
                     with self.accelerator.autocast():
-                        loss = self.model(data)
+                        loss = self.model(*data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
