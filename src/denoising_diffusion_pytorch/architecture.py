@@ -448,8 +448,6 @@ class Unet(nn.Module):
             classes=classes,
             cond_drop_prob=0.0,
         )
-        if cond_scale == 1:
-            return logits
         null_logits = self.forward(
             x,
             time,

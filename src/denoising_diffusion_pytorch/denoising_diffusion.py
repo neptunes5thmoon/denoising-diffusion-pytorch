@@ -146,6 +146,7 @@ class GaussianDiffusion(nn.Module):
 
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
+        self.num_classes = self.model.num_classes
 
         self.image_size = image_size
 
@@ -1026,6 +1027,12 @@ class Trainer:
             raise ValueError(msg)
 
         self.num_samples = num_samples
+        if self.model.num_classes is not None:
+            if self.num_samples < self.model.num_classes:
+                msg = f"More classes ({self.model.num_classes} than requested samples ({self.num_samples}). Will use random classes."
+                logger.warning(msg)
+            elif self.num_samples % self.model.num_classes != 0:
+                msg = f"Number of samples {self.num_samples} not divisible by number of classes ({self.model.num_classes}). Will fill up with uncoditioned samples."
         self.save_and_sample_every = save_and_sample_every
 
         self.batch_size = train_batch_size
@@ -1238,8 +1245,23 @@ class Trainer:
                         self.ema.ema_model.eval()
                         milestone = self.step // self.save_and_sample_every
                         with torch.inference_mode():
-                            batches = num_to_groups(self.num_samples, self.batch_size)
-                            all_images_list = [
+                            if self.model.num_classes is not None:
+                                if self.num_samples < self.model.num_classes:
+                                    batches = num_to_groups(self.num_samples, self.batch_size)
+                                    classes = torch.randint(0, self.model.num_classes, (self.num_samples,))
+                                else:
+                                    batches = num_to_groups(self.model.num_classes * (self.num_samples // self.model.num_classes), self.batch_size)
+                                    classes = torch.repeat_interleave(torch.arange(0, self.model.num_classes), self.num_samples // self.model.num_classes)
+                                    batches.append(self.num_samples % self.model.num_classes)
+                                    classes = torch.cat((classes, torch.randint(0,self.model.num_classes, (batches[-1],))))
+                                all_images_list = []
+                                for n in batches[:-1]:
+                                    all_images_list.append(self.ema.ema_model.sample(batch_size=n, classes=classes[len(all_images_list):len(all_images_list)+n].to(self.device)))
+                                if batches[-1] != 0:
+                                    all_images_list.append(self.ema.ema_model.sample(batch_size=batches[-1], cond_scale=0., classes=classes[len(all_images_list):len(all_images_list)+batches[-1]].to(device)))
+                            else:
+                                batches = num_to_groups(self.num_samples, self.batch_size)
+                                all_images_list = [
                                 self.ema.ema_model.sample(batch_size=n) for n in batches
                             ]
 
