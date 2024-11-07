@@ -341,7 +341,7 @@ class Unet(nn.Module):
 
         # class embeddings
         if self.num_classes is not None:
-            self.classes_emb = nn.Embedding(num_classes, dim)
+            self.classes_emb = nn.EmbeddingBag(num_classes, dim, mode="sum")
             self.null_classes_emb = nn.Parameter(torch.randn(dim))
             classes_dim = dim * 4
             self.classes_mlp = nn.Sequential(
@@ -438,6 +438,7 @@ class Unet(nn.Module):
         time,
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_scale=1.0,
         rescaled_phi=0.0,
     ):
@@ -446,6 +447,7 @@ class Unet(nn.Module):
             time,
             x_self_cond=x_self_cond,
             classes=classes,
+            offsets=offsets,
             cond_drop_prob=0.0,
         )
         null_logits = self.forward(
@@ -453,6 +455,7 @@ class Unet(nn.Module):
             time,
             x_self_cond=x_self_cond,
             classes=classes,
+            offsets=offsets,
             cond_drop_prob=1.0,
         )
         scaled_logits = null_logits + (logits - null_logits) * cond_scale
@@ -469,6 +472,7 @@ class Unet(nn.Module):
         time,
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_drop_prob=None,
     ):
         if not all(divisible_by(d, self.downsample_factor) for d in x.shape[-2:]):
@@ -477,7 +481,9 @@ class Unet(nn.Module):
         batch = x.shape[0]
         if self.num_classes is not None:
             cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
-            classes_emb = self.classes_emb(classes)
+            if offsets is None:
+                offsets = torch.arange(len(classes)).to(x.device)
+            classes_emb = self.classes_emb(classes, offsets)
             if cond_drop_prob > 0:
                 keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=x.device)
                 null_classes_emb = repeat(self.null_classes_emb, "d -> b d", b=batch)

@@ -353,6 +353,7 @@ class GaussianDiffusion(nn.Module):
         t,
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_scale=6.0,
         rescaled_phi=0.7,
         clip_x_start=False,
@@ -369,6 +370,7 @@ class GaussianDiffusion(nn.Module):
                 t,
                 x_self_cond=x_self_cond,
                 classes=classes,
+                offsets=offsets,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
             )
@@ -893,7 +895,7 @@ class GaussianDiffusion(nn.Module):
         )
 
     def p_losses(
-        self, x_start, t, classes=None, noise=None, offset_noise_strength=None
+        self, x_start, t, classes=None, offsets=None, noise=None, offset_noise_strength=None
     ):
         b, c, h, w = x_start.shape
 
@@ -924,7 +926,7 @@ class GaussianDiffusion(nn.Module):
                 x_self_cond.detach_()
 
         # predict and take gradient step
-        model_out = self.model(x, t, x_self_cond=x_self_cond, classes=classes)
+        model_out = self.model(x, t, x_self_cond=x_self_cond, classes=classes, offsets=offsets)
 
         if self.objective == "pred_noise":
             target = noise
@@ -1310,7 +1312,7 @@ class Trainer:
 
 if __name__ == "__main__":
     from architecture import Unet
-
+    logging.basicConfig(level=logging.INFO)
     logger.info("With classes")
     num_classes = 10
     model = Unet(
@@ -1332,7 +1334,23 @@ if __name__ == "__main__":
     logger.debug(f"{sampled_images.shape=}")
     sampled_images = diffusion.p_sample_loop((20, 6, 128, 128), sample_classes)
     sampled_images = diffusion.ddim_sample_loop((20, 6, 128, 128), sample_classes)
-
+    logger.info("With multilabel classes")
+    num_classes = 10
+    batchsize = 8
+    model = Unet(
+        dim=64,
+        dim_mults=(1,2,4,8),
+        num_classes=num_classes,
+        channels=6,
+    )
+    diffusion = GaussianDiffusion(
+        model, image_size=128, timesteps=1000, sampling_timesteps=250).cuda()
+    training_images = torch.randn((batchsize,6,128,128)).cuda()
+    class_onehot = torch.randint(2, (batchsize, num_classes))
+    image_classes = (torch.nonzero(class_onehot)[:,1]).cuda()
+    offsets = torch.cat((torch.zeros(1,dtype=torch.int), torch.nonzero(torch.diff(torch.nonzero(class_onehot)[:,0]))[:,0]+1)).cuda()
+    loss = diffusion(training_images, image_classes, offsets)
+    loss.backward()
     # Without classes
     logger.info("Without classes")
     model = Unet(dim=64, dim_mults=(1, 2, 4, 8), cond_drop_prob=0.5, channels=6)
