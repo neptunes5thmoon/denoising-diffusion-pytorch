@@ -30,13 +30,14 @@ from denoising_diffusion_pytorch.convenience import (
     exists,
     has_int_squareroot,
     identity,
+    move_to_device,
     num_to_groups,
 )
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.version import __version__
 
 logger = logging.getLogger(__name__)
-ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
+ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x0"])
 
 
 def gaussian_weights(width, height, var=0.01):
@@ -309,37 +310,37 @@ class GaussianDiffusion(nn.Module):
     def device(self):
         return self.betas.device
 
-    def predict_start_from_noise(self, x_t, t, noise):
+    def predict_start_from_noise(self, *, x_t, time, noise):
         return (
-            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
-            - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+            extract(self.sqrt_recip_alphas_cumprod, time, x_t.shape) * x_t
+            - extract(self.sqrt_recipm1_alphas_cumprod, time, x_t.shape) * noise
         )
 
-    def predict_noise_from_start(self, x_t, t, x0):
+    def predict_noise_from_start(self, *, x_t, time, x0):
         return (
-            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
-        ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+            extract(self.sqrt_recip_alphas_cumprod, time, x_t.shape) * x_t - x0
+        ) / extract(self.sqrt_recipm1_alphas_cumprod, time, x_t.shape)
 
-    def predict_v(self, x_start, t, noise):
+    def predict_v(self, *, x0, time, noise):
         return (
-            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise
-            - extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start
+            extract(self.sqrt_alphas_cumprod, time, x0.shape) * noise
+            - extract(self.sqrt_one_minus_alphas_cumprod, time, x0.shape) * x0
         )
 
-    def predict_start_from_v(self, x_t, t, v):
+    def predict_start_from_v(self, *, x_t, time, v):
         return (
-            extract(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t
-            - extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v
+            extract(self.sqrt_alphas_cumprod, time, x_t.shape) * x_t
+            - extract(self.sqrt_one_minus_alphas_cumprod, time, x_t.shape) * v
         )
 
-    def q_posterior(self, x_start, x_t, t):
+    def q_posterior(self, *, x0, x_t, time):
         posterior_mean = (
-            extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
-            + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            extract(self.posterior_mean_coef1, time, x_t.shape) * x0
+            + extract(self.posterior_mean_coef2, time, x_t.shape) * x_t
         )
-        posterior_variance = extract(self.posterior_variance, t, x_t.shape)
+        posterior_variance = extract(self.posterior_variance, time, x_t.shape)
         posterior_log_variance_clipped = extract(
-            self.posterior_log_variance_clipped, t, x_t.shape
+            self.posterior_log_variance_clipped, time, x_t.shape
         )
         return (
             posterior_mean,
@@ -349,8 +350,9 @@ class GaussianDiffusion(nn.Module):
 
     def model_predictions(
         self,
+        *,
         x,
-        t,
+        time,
         x_self_cond=None,
         classes=None,
         offsets=None,
@@ -363,11 +365,11 @@ class GaussianDiffusion(nn.Module):
             partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
         )
         if classes is None:
-            model_output = self.model(x, t, x_self_cond)
+            model_output = self.model(x=x, time=time, x_self_cond=x_self_cond)
         else:
             model_output, model_output_null = self.model.forward_with_cond_scale(
-                x,
-                t,
+                x=x,
+                time=time,
                 x_self_cond=x_self_cond,
                 classes=classes,
                 offsets=offsets,
@@ -380,92 +382,98 @@ class GaussianDiffusion(nn.Module):
                 pred_noise = model_output_null
             else:
                 pred_noise = model_output
-            x_start = self.predict_start_from_noise(x, t, pred_noise)
-            x_start = maybe_clip(x_start)
+            x0 = self.predict_start_from_noise(x_t=x, time=time, noise=pred_noise)
+            x0 = maybe_clip(x0)
 
             if clip_x_start and rederive_pred_noise:
-                pred_noise = self.predict_noise_from_start(x, t, x_start)
+                pred_noise = self.predict_noise_from_start(x_t=x, time=time, x0=x0)
 
         elif self.objective == "pred_x0":
-            x_start = model_output
-            x_start = maybe_clip(x_start)
+            x0 = model_output
+            x0 = maybe_clip(x0)
             if self.use_cfg_plus_plus and classes is not None:
-                pred_noise = self.predict_noise_from_start(x, t, x_start)
+                pred_noise = self.predict_noise_from_start(x_t=x, time=time, x0=x0)
             else:
                 pred_noise = self.predict_noise_from_start(
-                    x, t, maybe_clip(model_output_null)
+                    x_t=x, time=time, x0=maybe_clip(model_output_null)
                 )
 
         elif self.objective == "pred_v":
             v = model_output
-            x_start = self.predict_start_from_v(x, t, v)
-            x_start = maybe_clip(x_start)
+            x0 = self.predict_start_from_v(x_t=x, time=time, v=v)
+            x0 = maybe_clip(x0)
             if self.use_cfg_plus_plus and classes is not None:
-                x_start_for_pred_noise = self.predict_start_from_v(
-                    x, t, model_output_null
+                x0_for_pred_noise = self.predict_start_from_v(
+                    x=x, time=time, v=model_output_null
                 )
                 pred_noise = self.predict_noise_from_start(
-                    x, t, maybe_clip(x_start_for_pred_noise)
+                    x=x, time=time, x0=maybe_clip(x0_for_pred_noise)
                 )
             else:
-                pred_noise = self.predict_noise_from_start(x, t, x_start)
+                pred_noise = self.predict_noise_from_start(x_t=x, time=time, x0=x0)
 
-        return ModelPrediction(pred_noise, x_start)
+        return ModelPrediction(pred_noise, x0)
 
     def p_mean_variance(
         self,
+        *,
         x,
-        t,
+        time,
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_scale=6.0,
         rescaled_phi=0.7,
         clip_denoised=True,
     ):
         preds = self.model_predictions(
-            x,
-            t,
+            x=x,
+            time=time,
             x_self_cond=x_self_cond,
             classes=classes,
+            offsets=offsets,
             cond_scale=cond_scale,
             rescaled_phi=rescaled_phi,
         )
-        x_start = preds.pred_x_start
+        x0 = preds.pred_x0
 
         if clip_denoised:
-            x_start.clamp_(-1.0, 1.0)
+            x0.clamp_(-1.0, 1.0)
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_start, x_t=x, t=t
+            x0=x0, x_t=x, time=time
         )
-        return model_mean, posterior_variance, posterior_log_variance, x_start
+        return model_mean, posterior_variance, posterior_log_variance, x0
 
     @torch.inference_mode()
     def p_sample(
         self,
+        *,
         x,
-        t: int,
+        time: int,
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_scale=6.0,
         rescaled_phi=0.7,
         noise=None,
         clip_denoised=True,
     ):
         b, *_, device = *x.shape, self.device
-        batched_times = torch.full((b,), t, device=device, dtype=torch.long)
+        batched_times = torch.full((b,), time, device=device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
             x=x,
-            t=batched_times,
+            time=batched_times,
             x_self_cond=x_self_cond,
             classes=classes,
+            offsets=offsets,
             cond_scale=cond_scale,
             rescaled_phi=rescaled_phi,
             clip_denoised=clip_denoised,
         )
         if noise is None:
-            noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
-        elif t == 0:
+            noise = torch.randn_like(x) if time > 0 else 0.0  # no noise if t == 0
+        elif time == 0:
             noise = 0.0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         if self.self_condition is None:
@@ -475,13 +483,14 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def blockwise_sample(
         self,
+        *,
         data,
         noise,
         self_cond,
         block_weight,
         blockshape,
         sampling_func,
-        t,
+        time,
         batchsize=1,
         **sample_fn_kwargs,
     ):
@@ -533,8 +542,8 @@ class GaussianDiffusion(nn.Module):
                 batch_cond = None
             # process each block
             processed_batch, x_start = sampling_func(
-                batch_data,
-                t=t,
+                x=batch_data,
+                time=time,
                 x_self_cond=batch_cond,
                 noise=batch_noise,
                 **sample_fn_kwargs,
@@ -585,8 +594,10 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def p_sample_loop(
         self,
+        *,
         shape,  # (bs, ch, x, y)
         classes=None,
+        offsets=None,
         return_all_timesteps=False,
         blockshape=None,
         cond_scale=6.0,
@@ -623,7 +634,7 @@ class GaussianDiffusion(nn.Module):
 
         x_start = None
 
-        for t in tqdm(
+        for time in tqdm(
             reversed(range(0, self.num_timesteps)),
             desc="sampling loop time step",
             total=self.num_timesteps,
@@ -631,42 +642,45 @@ class GaussianDiffusion(nn.Module):
             if blockshape is None:  # Single-shot prediction
                 self_cond = x_start if self.self_condition else None
                 img, x_start = self.p_sample(
-                    img,
-                    t,
+                    x=img,
+                    time=time,
                     x_self_cond=self_cond,
                     classes=classes,
+                    offsets=offsets,
                     rescaled_phi=rescaled_phi,
                     cond_scale=cond_scale,
                 )
             else:
                 noise = torch.randn(shape, device=self.device)  # initalize noise
                 img1, x_start1 = self.blockwise_sample(
-                    img,
-                    noise,
-                    x_start,
-                    chunk_weight,
-                    blockshape,
-                    self.p_sample,
-                    t,
+                    data=img,
+                    noise=noise,
+                    self_cond=x_start,
+                    block_weight=chunk_weight,
+                    blockshape=blockshape,
+                    sampling_func=self.p_sample,
+                    time=time,
                     batchsize=n_batch_blocks,
                     classes=classes,
+                    offsets=offsets,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )  # run inference in blocks
                 img2, x_start2 = self.blockwise_sample(
-                    torch.roll(img, (overlap, overlap), (2, 3)),
-                    torch.roll(noise, (overlap, overlap), (2, 3)),
-                    (
+                    data=torch.roll(img, (overlap, overlap), (2, 3)),
+                    noise=torch.roll(noise, (overlap, overlap), (2, 3)),
+                    self_cond=(
                         torch.roll(x_start, (overlap, overlap), (2, 3))
                         if x_start is not None
                         else None
                     ),
-                    chunk_weight,
-                    blockshape,
-                    self.p_sample,
-                    t,
+                    block_weight=chunk_weight,
+                    blockshape=blockshape,
+                    sampling_func=self.p_sample,
+                    time=time,
                     batchsize=n_batch_blocks,
                     classes=classes,
+                    offsets=offsets,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )  # run inference in blocks, but offset by overlap in x,y
@@ -689,24 +703,27 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def ddim_sample(
         self,
+        *,
         x,
-        t: tuple[int, int],
+        time: tuple[int, int],
         x_self_cond=None,
         classes=None,
+        offsets=None,
         cond_scale=6.0,
         rescaled_phi=0.7,
         noise=None,
         clip_denoised=True,
     ):
-        time, time_next = t
+        time, time_next = time
         batch = x.shape[0]
         time_cond = torch.full((batch,), time, device=self.device, dtype=torch.long)
 
         pred_noise, x_start, *_ = self.model_predictions(
-            x,
-            time_cond,
-            x_self_cond,
+            x=x,
+            time=time_cond,
+            x_self_cond=x_self_cond,
             classes=classes,
+            offsets=offsets,
             cond_scale=cond_scale,
             rescaled_phi=rescaled_phi,
             clip_x_start=clip_denoised,
@@ -730,8 +747,10 @@ class GaussianDiffusion(nn.Module):
     @torch.inference_mode()
     def ddim_sample_loop(
         self,
+        *,
         shape,
         classes=None,
+        offsets=None,
         return_all_timesteps=False,
         blockshape=None,
         cond_scale=6.0,
@@ -771,51 +790,54 @@ class GaussianDiffusion(nn.Module):
         if return_all_timesteps:
             imgs = [img]
 
-        x_start = None
+        x0 = None
 
         for time, time_next in tqdm(time_pairs, desc="sampling loop time step"):
             if blockshape is None:
-                x_self_cond = x_start if self.self_condition else None
-                img, x_start = self.ddim_sample(
-                    img,
-                    (time, time_next),
+                x_self_cond = x0 if self.self_condition else None
+                img, x0 = self.ddim_sample(
+                    x=img,
+                    time=(time, time_next),
                     x_self_cond=x_self_cond,
                     classes=classes,
+                    offsets=offsets,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )
 
             else:
                 noise = torch.randn(shape, device=self.device)
-                img1, x_start1 = self.blockwise_sample(
-                    img,
-                    noise,
-                    x_start,
-                    chunk_weight,
-                    blockshape,
-                    self.ddim_sample,
-                    (time, time_next),
+                img1, x0_1 = self.blockwise_sample(
+                    data=img,
+                    noise=noise,
+                    self_cond=x0,
+                    block_weight=chunk_weight,
+                    blockshape=blockshape,
+                    sampling_func=self.ddim_sample,
+                    time=(time, time_next),
                     batchsize=n_batch_blocks,
                     classes=classes,
+                    offsets=offsets,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )
-                img2, x_start2 = self.blockwise_sample(
-                    torch.roll(img, (overlap, overlap), (2, 3)),
-                    torch.roll(noise, (overlap, overlap), (2, 3)),
-                    torch.roll(x_start) if x_start is not None else None,
-                    chunk_weight,
-                    blockshape,
-                    self.ddim_sample,
-                    (time, time_next),
+                img2, x0_2 = self.blockwise_sample(
+                    data=torch.roll(img, (overlap, overlap), (2, 3)),
+                    noise=torch.roll(noise, (overlap, overlap), (2, 3)),
+                    self_cond=torch.roll(x0) if x0 is not None else None,
+                    block_weight=chunk_weight,
+                    blockshape=blockshape,
+                    sampling_func=self.ddim_sample,
+                    time=(time, time_next),
                     batchsize=n_batch_blocks,
                     classes=classes,
+                    offsets=offsets,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
                 )
                 img2 = torch.roll(img2, (-overlap, -overlap), (2, 3))
                 if self.self_condition:
-                    x_start = x_start1 + x_start2
+                    x0 = x0_1 + x0_2
                 img = img1 + img2
             if return_all_timesteps:
                 imgs.append(img)
@@ -828,45 +850,46 @@ class GaussianDiffusion(nn.Module):
         return ret
 
     @torch.inference_mode()
-    def sample(self, batch_size=16, return_all_timesteps=False, **kwargs):
+    def sample(self, *, batch_size=16, return_all_timesteps=False, **kwargs):
         image_size, channels = self.image_size, self.channels
         sample_fn = (
             self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample_loop
         )
         return sample_fn(
-            (batch_size, channels, image_size, image_size),
+            shape=(batch_size, channels, image_size, image_size),
             return_all_timesteps=return_all_timesteps,
             **kwargs,
         )
 
     @torch.inference_mode()
     def interpolate(
-        self, x1, x2, classes, t=None, lam=0.5, cond_scale=6.0, rescaled_phi=0.7
+        self, *, x1, x2, timesteps=None, classes=None, offsets=None, lam=0.5, cond_scale=6.0, rescaled_phi=0.7
     ):
         b, *_, device = *x1.shape, x1.device
-        t = default(t, self.num_timesteps - 1)
+        timesteps = default(timesteps, self.num_timesteps - 1)
         if x1.shape != x2.shape:
             msg = f"Shapes of images to interpolate between needs to match but got {x1.shape} and {x2.shape}"
             raise ValueError(msg)
 
-        t_batched = torch.full((b,), t, device=device)
-        xt1, xt2 = (self.q_sample(x, t=t_batched) for x in (x1, x2))
+        t_batched = torch.full((b,), timesteps, device=device)
+        xt1, xt2 = (self.q_sample(x0=x, time=t_batched) for x in (x1, x2))
 
         img = (1 - lam) * xt1 + lam * xt2
 
         x_start = None
 
-        for i in tqdm(
-            reversed(range(0, t)),
+        for time in tqdm(
+            reversed(range(0, timesteps)),
             desc="interpolation sample time step",
-            total=t,
+            total=timesteps,
         ):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(
-                img,
-                i,
-                self_cond,
-                classes,
+                x=img,
+                time=time,
+                x_self_cond=self_cond,
+                classes=classes,
+                offsets=offsets,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
             )
@@ -882,24 +905,31 @@ class GaussianDiffusion(nn.Module):
         return torch.from_numpy(assign).to(dist.device)
 
     @autocast("cuda", enabled=False)
-    def q_sample(self, x_start, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
+    def q_sample(self, *, x0, time, noise=None):
+        noise = default(noise, lambda: torch.randn_like(x0))
 
         if self.immiscible:
-            assign = self.noise_assignment(x_start, noise)
+            assign = self.noise_assignment(x0, noise)
             noise = noise[assign]
 
         return (
-            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+            extract(self.sqrt_alphas_cumprod, time, x0.shape) * x0
+            + extract(self.sqrt_one_minus_alphas_cumprod, time, x0.shape) * noise
         )
 
     def p_losses(
-        self, x_start, t, classes=None, offsets=None, noise=None, offset_noise_strength=None
+        self,
+        *,
+        x0,
+        time,
+        classes=None,
+        offsets=None,
+        noise=None,
+        offset_noise_strength=None,
     ):
-        b, c, h, w = x_start.shape
+        b, c, h, w = x0.shape
 
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x0))
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
@@ -908,12 +938,12 @@ class GaussianDiffusion(nn.Module):
         )
 
         if offset_noise_strength > 0.0:
-            offset_noise = torch.randn(x_start.shape[:2], device=self.device)
+            offset_noise = torch.randn(x0.shape[:2], device=self.device)
             noise += offset_noise_strength * rearrange(offset_noise, "b c -> b c 1 1")
 
         # noise sample
 
-        x = self.q_sample(x_start=x_start, t=t, noise=noise)
+        x = self.q_sample(x0=x0, time=time, noise=noise)
 
         # if doing self-conditioning, 50% of the time, predict x_start from current set of times
         # and condition with unet with that
@@ -922,18 +952,20 @@ class GaussianDiffusion(nn.Module):
         x_self_cond = None
         if self.self_condition and random() < 0.5:  # noqa: PLR2004,S311
             with torch.inference_mode():
-                x_self_cond = self.model_predictions(x, t).pred_x_start
+                x_self_cond = self.model_predictions(x=x, time=time).pred_x0
                 x_self_cond.detach_()
 
         # predict and take gradient step
-        model_out = self.model(x, t, x_self_cond=x_self_cond, classes=classes, offsets=offsets)
+        model_out = self.model(
+            x=x, time=time, x_self_cond=x_self_cond, classes=classes, offsets=offsets
+        )
 
         if self.objective == "pred_noise":
             target = noise
         elif self.objective == "pred_x0":
-            target = x_start
+            target = x0
         elif self.objective == "pred_v":
-            v = self.predict_v(x_start, t, noise)
+            v = self.predict_v(x0=x0, time=time, noise=noise)
             target = v
         else:
             msg = (
@@ -950,10 +982,10 @@ class GaussianDiffusion(nn.Module):
             loss = loss * self.channel_weights.view(1, c, 1, 1)
         loss = reduce(loss, "b ... -> b", "mean")
 
-        loss = loss * extract(self.loss_weight, t, loss.shape)
+        loss = loss * extract(self.loss_weight, time, loss.shape)
         return loss.mean()
 
-    def forward(self, img, *args, **kwargs):
+    def forward(self, *, image, classes=None, offsets=None, **kwargs):
         (
             b,
             _,
@@ -961,17 +993,19 @@ class GaussianDiffusion(nn.Module):
             w,
             device,
             img_size,
-        ) = (*img.shape, img.device, self.image_size)
+        ) = (*image.shape, image.device, self.image_size)
         if h != img_size or w != img_size:
             msg = f"Height and width of image must be {img_size}, but got {h} and {w}"
             raise ValueError(msg)
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
-        img = self.normalize(img)
-        return self.p_losses(img, t, *args, **kwargs)
+        image = self.normalize(image)
+        return self.p_losses(
+            x0=image, time=t, classes=classes, offsets=offsets, **kwargs
+        )
 
 
-# trainer class
+# trainer classca
 
 
 class Trainer:
@@ -1218,10 +1252,9 @@ class Trainer:
                 total_loss = 0.0
 
                 for _ in range(self.gradient_accumulate_every):
-                    data = tuple(d.to(device) for d in next(self.dl))
-
+                    data = move_to_device(next(self.dl))
                     with self.accelerator.autocast():
-                        loss = self.model(*data)
+                        loss = self.model(**data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
@@ -1249,23 +1282,69 @@ class Trainer:
                         with torch.inference_mode():
                             if self.model.num_classes is not None:
                                 if self.num_samples < self.model.num_classes:
-                                    batches = num_to_groups(self.num_samples, self.batch_size)
-                                    classes = torch.randint(0, self.model.num_classes, (self.num_samples,))
+                                    batches = num_to_groups(
+                                        self.num_samples, self.batch_size
+                                    )
+                                    classes = torch.randint(
+                                        0, self.model.num_classes, (self.num_samples,)
+                                    )
                                 else:
-                                    batches = num_to_groups(self.model.num_classes * (self.num_samples // self.model.num_classes), self.batch_size)
-                                    classes = torch.repeat_interleave(torch.arange(0, self.model.num_classes), self.num_samples // self.model.num_classes)
-                                    batches.append(self.num_samples % self.model.num_classes)
-                                    classes = torch.cat((classes, torch.randint(0,self.model.num_classes, (batches[-1],))))
+                                    batches = num_to_groups(
+                                        self.model.num_classes
+                                        * (self.num_samples // self.model.num_classes),
+                                        self.batch_size,
+                                    )
+                                    classes = torch.repeat_interleave(
+                                        torch.arange(0, self.model.num_classes),
+                                        self.num_samples // self.model.num_classes,
+                                    )
+                                    batches.append(
+                                        self.num_samples % self.model.num_classes
+                                    )
+                                    classes = torch.cat(
+                                        (
+                                            classes,
+                                            torch.randint(
+                                                0,
+                                                self.model.num_classes,
+                                                (batches[-1],),
+                                            ),
+                                        )
+                                    )
                                 all_images_list = []
                                 for n in batches[:-1]:
-                                    all_images_list.append(self.ema.ema_model.sample(batch_size=n, classes=classes[len(all_images_list):len(all_images_list)+n].to(self.device)))
+                                    all_images_list.append(
+                                        self.ema.ema_model.sample(
+                                            batch_size=n,
+                                            classes=classes[
+                                                len(all_images_list) : len(
+                                                    all_images_list
+                                                )
+                                                + n
+                                            ].to(self.device),
+                                        )
+                                    )
                                 if batches[-1] != 0:
-                                    all_images_list.append(self.ema.ema_model.sample(batch_size=batches[-1], cond_scale=0., classes=classes[len(all_images_list):len(all_images_list)+batches[-1]].to(device)))
+                                    all_images_list.append(
+                                        self.ema.ema_model.sample(
+                                            batch_size=batches[-1],
+                                            cond_scale=0.0,
+                                            classes=classes[
+                                                len(all_images_list) : len(
+                                                    all_images_list
+                                                )
+                                                + batches[-1]
+                                            ].to(device),
+                                        )
+                                    )
                             else:
-                                batches = num_to_groups(self.num_samples, self.batch_size)
+                                batches = num_to_groups(
+                                    self.num_samples, self.batch_size
+                                )
                                 all_images_list = [
-                                self.ema.ema_model.sample(batch_size=n) for n in batches
-                            ]
+                                    self.ema.ema_model.sample(batch_size=n)
+                                    for n in batches
+                                ]
 
                         all_images = torch.cat(all_images_list, dim=0)
                         if self.channels <= 3:  # noqa: PLR2004
@@ -1312,6 +1391,7 @@ class Trainer:
 
 if __name__ == "__main__":
     from architecture import Unet
+
     logging.basicConfig(level=logging.INFO)
     logger.info("With classes")
     num_classes = 10
@@ -1327,29 +1407,35 @@ if __name__ == "__main__":
     ).cuda()
     training_images = torch.randn((8, 6, 128, 128)).cuda()
     image_classes = torch.randint(0, num_classes, (8,)).cuda()
-    loss = diffusion(training_images, image_classes)
+    loss = diffusion(image=training_images, classes=image_classes)
     loss.backward()
     sample_classes = torch.randint(0, num_classes, (20,)).cuda()
-    sampled_images = diffusion.sample(20, classes=sample_classes)
+    sampled_images = diffusion.sample(batch_size=20, classes=sample_classes)
     logger.debug(f"{sampled_images.shape=}")
-    sampled_images = diffusion.p_sample_loop((20, 6, 128, 128), sample_classes)
-    sampled_images = diffusion.ddim_sample_loop((20, 6, 128, 128), sample_classes)
+    sampled_images = diffusion.p_sample_loop(shape=(20, 6, 128, 128), classes=sample_classes)
+    sampled_images = diffusion.ddim_sample_loop(shape=(20, 6, 128, 128), classes=sample_classes)
     logger.info("With multilabel classes")
     num_classes = 10
     batchsize = 8
     model = Unet(
         dim=64,
-        dim_mults=(1,2,4,8),
+        dim_mults=(1, 2, 4, 8),
         num_classes=num_classes,
         channels=6,
     )
     diffusion = GaussianDiffusion(
-        model, image_size=128, timesteps=1000, sampling_timesteps=250).cuda()
-    training_images = torch.randn((batchsize,6,128,128)).cuda()
+        model, image_size=128, timesteps=1000, sampling_timesteps=250
+    ).cuda()
+    training_images = torch.randn((batchsize, 6, 128, 128)).cuda()
     class_onehot = torch.randint(2, (batchsize, num_classes))
-    image_classes = (torch.nonzero(class_onehot)[:,1]).cuda()
-    offsets = torch.cat((torch.zeros(1,dtype=torch.int), torch.nonzero(torch.diff(torch.nonzero(class_onehot)[:,0]))[:,0]+1)).cuda()
-    loss = diffusion(training_images, image_classes, offsets)
+    image_classes = (torch.nonzero(class_onehot)[:, 1]).cuda()
+    offsets = torch.cat(
+        (
+            torch.zeros(1, dtype=torch.int),
+            torch.nonzero(torch.diff(torch.nonzero(class_onehot)[:, 0]))[:, 0] + 1,
+        )
+    ).cuda()
+    loss = diffusion(image=training_images, classes=image_classes, offsets=offsets)
     loss.backward()
     # Without classes
     logger.info("Without classes")
@@ -1358,9 +1444,9 @@ if __name__ == "__main__":
         model, image_size=128, timesteps=1000, sampling_timesteps=250
     ).cuda()
     training_images = torch.randn((8, 6, 128, 128)).cuda()
-    loss = diffusion(training_images)
+    loss = diffusion(image=training_images)
     loss.backward()
-    sampled_images = diffusion.sample(20)
+    sampled_images = diffusion.sample(batchsize=20)
     logger.debug(f"{sampled_images.shape=}")
-    sampled_images = diffusion.p_sample_loop((20, 6, 128, 128))
-    sampled_images = diffusion.ddim_sample_loop((20, 6, 128, 128))
+    sampled_images = diffusion.p_sample_loop(shape=(20, 6, 128, 128))
+    sampled_images = diffusion.ddim_sample_loop(shape=(20, 6, 128, 128))

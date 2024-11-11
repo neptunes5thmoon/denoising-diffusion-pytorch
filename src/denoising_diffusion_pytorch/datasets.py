@@ -22,7 +22,7 @@ from datatree import DataTree
 from fibsem_tools import read
 from PIL import Image
 from torch import Tensor, nn
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import ConcatDataset, Dataset, default_collate
 from torchvision.transforms import v2 as transforms
 
 from denoising_diffusion_pytorch.convenience import exists
@@ -75,6 +75,17 @@ def convert_image_to_fn(img_type, image):
     if image.mode != img_type:
         return image.convert(img_type)
     return image
+
+
+def collate_cellmap_dicts(batch):
+    output_dict = {}
+    output_dict["image"] = default_collate([d["image"] for d in batch])
+    if "classes" in batch[0]:
+        output_dict["classes"] = torch.cat(tuple(d["classes"] for d in batch))
+        output_dict["offsets"] = torch.Tensor(
+            [0] + [len(d["classes"]) for d in batch[:-1]]
+        )
+    return output_dict
 
 
 class SimpleDataset(Dataset):
@@ -200,6 +211,7 @@ class RawChannelOptions(str, Enum):
 
 class ClassOptions(str, Enum):
     DATASET = "dataset"
+    LABEL_BAG = "label_bag"
 
 
 class CellMapDatasets3Das2D(ConcatDataset):
@@ -247,6 +259,11 @@ class CellMapDatasets3Das2D(ConcatDataset):
             )
             if classes == ClassOptions.DATASET:
                 self.class_idx_to_name[dataset_idx] = dataname
+            elif classes == ClassOptions.LABEL_BAG:
+                if label_representation != LabelRepresentation.BINARY:
+                    self.class_idx_to_name = dict(enumerate(["background", *class_list]))
+                else:
+                    self.class_idx_to_name = dict(enumerate(class_list))
         super().__init__(cellmap_datasets)
 
 
@@ -361,24 +378,20 @@ class CellMapDataset3Das2D(ConcatDataset):
             )
         return self._raw_scale
 
-    def __getitem__(self, idx: int) -> Tensor:
-        el = super().__getitem__(idx)
+    def __getitem__(self, idx: int) -> dict[str, Tensor]:
+        el: dict[str, np.ndarray] = super().__getitem__(idx)
         if (
             self.raw_channel == RawChannelOptions.FIRST
             or self.raw_channel == RawChannelOptions.SECOND
         ):
             seed = random.randint(0, 2**32 - 1)
             torch.manual_seed(seed)
-            transformed_0 = self.transform(el[0])
+            transformed_0 = self.transform(el["image"][0])
             torch.manual_seed(seed)
-            transformed_1 = self.transform(el[1])
-            transformed = (transformed_0, transformed_1)
+            transformed_1 = self.transform(el["image"][1])
+            el["image"] = (transformed_0, transformed_1)
         else:
-            transformed = (self.transform(el[0]),)
-        if self.classes is None:
-            el = transformed
-        else:
-            el = (*transformed, el[-1])
+            el["image"] = self.transform(el["image"])
         return el
 
 
@@ -689,7 +702,9 @@ class AnnotationCrop3Das2D(Dataset):
                 )
             )
 
-    def __getitem__(self, idx: int) -> np.ndarray:
+    def __getitem__(self, idx: int) -> dict[str, np.ndarray]:
+        res = {}
+        # Figure out what indices to use
         if self.random_crop:
             x_start = np.random.randint(
                 0, self.sizes["x"] - self.parent_data.image_size + 1
@@ -726,6 +741,8 @@ class AnnotationCrop3Das2D(Dataset):
         arrs: list[xr.DataArray]
         if self.label_representation == LabelRepresentation.CLASS_IDS:
             arrs = [self.class_ids_xarray.isel(vox_slice)]
+            if self.classes == ClassOptions.LABEL_BAG:
+                res["classes"] = np.unique(arrs)
         else:
             arrs = []
             if self.label_representation == LabelRepresentation.ONE_HOT:
@@ -734,8 +751,10 @@ class AnnotationCrop3Das2D(Dataset):
             for cls_name in self.parent_data.class_list:
                 cls_arr = self.class_xarray(cls_name).isel(vox_slice)
                 arrs.append(cls_arr.astype("float32"))
-        if self.classes == ClassOptions.DATASET:
-            cls_idx = self.parent_data.dataset_idx
+            if self.classes == ClassOptions.LABEL_BAG:
+                res["classes"] = np.array(
+                    [k for k, arr in enumerate(arrs) if np.any(arr)]
+                )
         if self.raw_channel == RawChannelOptions.EXCLUDE:
             for k, arr in enumerate(arrs):
                 if (
@@ -749,7 +768,7 @@ class AnnotationCrop3Das2D(Dataset):
                         }
                     )
 
-            res = (
+            image = (
                 dask.array.stack(arrs, axis=-1).compute(num_workers=self.dask_workers),
             )
         else:
@@ -802,17 +821,13 @@ class AnnotationCrop3Das2D(Dataset):
                 )
             if self.raw_channel == RawChannelOptions.APPEND:
                 arrs.append(raw_arr)
-                res = (
-                    dask.array.stack(arrs, axis=-1).compute(
-                        num_workers=self.dask_workers
-                    ),
+                image = dask.array.stack(arrs, axis=-1).compute(
+                    num_workers=self.dask_workers
                 )
             elif self.raw_channel == RawChannelOptions.PREPEND:
                 arrs = [raw_arr, *arrs]
-                res = (
-                    dask.array.stack(arrs, axis=-1).compute(
-                        num_workers=self.dask_workers
-                    ),
+                image = dask.array.stack(arrs, axis=-1).compute(
+                    num_workers=self.dask_workers
                 )
             elif self.raw_channel == RawChannelOptions.FIRST:
                 if self.pre_load:
@@ -821,7 +836,7 @@ class AnnotationCrop3Das2D(Dataset):
                     raw_np = np.expand_dims(raw_arr.data, -1).compute(
                         num_workers=self.dask_workers
                     )
-                res = (
+                image = (
                     raw_np,
                     dask.array.stack(arrs, axis=-1).compute(
                         num_workers=self.dask_workers
@@ -834,7 +849,7 @@ class AnnotationCrop3Das2D(Dataset):
                     raw_np = np.expand_dims(raw_arr.data, -1).compute(
                         num_workers=self.dask_workers
                     )
-                res = (
+                image = (
                     dask.array.stack(arrs, axis=-1).compute(
                         num_workers=self.dask_workers
                     ),
@@ -843,8 +858,13 @@ class AnnotationCrop3Das2D(Dataset):
             else:
                 msg = f"Unknown option for handling raw channel: {self.raw_channel}"
                 raise ValueError(msg)
+        # if self.classes == ClassOptions.LABEL_BAG:
+        res["image"] = image
+        if self.classes == ClassOptions.DATASET:
+            cls_idx = self.parent_data.dataset_idx
+            res["classes"] = cls_idx
         if self.classes is not None:
-            res = (*res, cls_idx)
+            res["classes"] = torch.Tensor(res["classes"])
         return res
 
 

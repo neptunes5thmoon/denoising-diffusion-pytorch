@@ -434,6 +434,7 @@ class Unet(nn.Module):
 
     def forward_with_cond_scale(
         self,
+        *,
         x,
         time,
         x_self_cond=None,
@@ -443,16 +444,16 @@ class Unet(nn.Module):
         rescaled_phi=0.0,
     ):
         logits = self.forward(
-            x,
-            time,
+            x=x,
+            time=time,
             x_self_cond=x_self_cond,
             classes=classes,
             offsets=offsets,
             cond_drop_prob=0.0,
         )
         null_logits = self.forward(
-            x,
-            time,
+            x=x,
+            time=time,
             x_self_cond=x_self_cond,
             classes=classes,
             offsets=offsets,
@@ -468,6 +469,7 @@ class Unet(nn.Module):
 
     def forward(
         self,
+        *,
         x,
         time,
         x_self_cond=None,

@@ -1,5 +1,7 @@
 import math
 from functools import wraps
+
+import torch
 from einops import pack, unpack
 
 
@@ -88,3 +90,16 @@ def pack_one(t, pattern):
 
 def unpack_one(t, ps, pattern):
     return unpack(t, ps, pattern)[0]
+
+
+def move_to_device(batch, device):
+    if isinstance(batch, torch.Tensor):
+        return batch.to(device)
+    elif isinstance(batch, dict):
+        return {key: move_to_device(value, device) for key, value in batch.items()}
+    elif isinstance(batch, list):
+        return [move_to_device(item, device) for item in batch]
+    elif isinstance(batch, tuple):
+        return tuple(move_to_device(item, device) for item in batch)
+    else:
+        return batch
