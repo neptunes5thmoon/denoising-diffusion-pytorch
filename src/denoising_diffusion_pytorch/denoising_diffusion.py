@@ -35,6 +35,7 @@ from denoising_diffusion_pytorch.convenience import (
 )
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.version import __version__
+from denoising_diffusion_pytorch.datasets import collate_cellmap_dicts
 
 logger = logging.getLogger(__name__)
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x0"])
@@ -1101,6 +1102,7 @@ class Trainer:
             num_workers=dataloader_nworkers,
             prefetch_factor=prefetch_factor,
             persistent_workers=persistent_workers,
+            collate_fn=collate_cellmap_dicts
         )
 
         dl = self.accelerator.prepare(dl)
@@ -1250,10 +1252,11 @@ class Trainer:
         ) as pbar:
             while self.step < self.train_num_steps:
                 total_loss = 0.0
-
                 for _ in range(self.gradient_accumulate_every):
-                    data = move_to_device(next(self.dl))
+                    data = move_to_device(next(self.dl), self.device)
+                    # print(data["offsets"])
                     with self.accelerator.autocast():
+                        assert data["offsets"].dtype != None, f"{data['offsets'].dtype}"
                         loss = self.model(**data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()

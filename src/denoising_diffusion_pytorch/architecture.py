@@ -483,8 +483,6 @@ class Unet(nn.Module):
         batch = x.shape[0]
         if self.num_classes is not None:
             cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
-            if offsets is None:
-                offsets = torch.arange(len(classes)).to(x.device)
             classes_emb = self.classes_emb(classes, offsets)
             if cond_drop_prob > 0:
                 keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=x.device)

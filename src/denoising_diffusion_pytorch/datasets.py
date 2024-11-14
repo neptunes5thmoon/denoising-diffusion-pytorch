@@ -81,9 +81,12 @@ def collate_cellmap_dicts(batch):
     output_dict = {}
     output_dict["image"] = default_collate([d["image"] for d in batch])
     if "classes" in batch[0]:
-        output_dict["classes"] = torch.cat(tuple(d["classes"] for d in batch))
-        output_dict["offsets"] = torch.Tensor(
-            [0] + [len(d["classes"]) for d in batch[:-1]]
+        output_dict["classes"] = torch.cat(tuple(d["classes"] for d in batch)).to(torch.long) 
+        offsets = [0]
+        for d in batch[:-1]:
+            offsets.append(offsets[-1] + len(d["classes"]))
+        output_dict["offsets"] = torch.tensor(offsets,
+            dtype=torch.long
         )
     return output_dict
 
