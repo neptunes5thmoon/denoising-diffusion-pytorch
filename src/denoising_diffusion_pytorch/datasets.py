@@ -17,6 +17,7 @@ import torch
 import xarray as xr
 import yaml
 import zarr
+from bidict import bidict
 from cellmap_utils_kit.h5_xarray_reader import read_any_xarray
 from datatree import DataTree
 from fibsem_tools import read
@@ -79,15 +80,16 @@ def convert_image_to_fn(img_type, image):
 
 def collate_cellmap_dicts(batch):
     output_dict = {}
-    output_dict["image"] = default_collate([d["image"] for d in batch])
+    if "image" in batch[0]:
+        output_dict["image"] = default_collate([d["image"] for d in batch])
     if "classes" in batch[0]:
-        output_dict["classes"] = torch.cat(tuple(d["classes"] for d in batch)).to(torch.long) 
+        output_dict["classes"] = torch.cat(tuple(d["classes"] for d in batch)).to(
+            torch.long
+        )
         offsets = [0]
         for d in batch[:-1]:
             offsets.append(offsets[-1] + len(d["classes"]))
-        output_dict["offsets"] = torch.tensor(offsets,
-            dtype=torch.long
-        )
+        output_dict["offsets"] = torch.tensor(offsets, dtype=torch.long)
     return output_dict
 
 
@@ -234,6 +236,7 @@ class CellMapDatasets3Das2D(ConcatDataset):
         label_representation: LabelRepresentation = LabelRepresentation.BINARY,
         random_crop: bool = True,
         classes: ClassOptions | None = None,
+        sample_requests: None | Sequence[Sequence[str] | str],
     ):
         cellmap_datasets = []
         with open(data_config) as f:
@@ -260,14 +263,42 @@ class CellMapDatasets3Das2D(ConcatDataset):
                     classes=classes,
                 )
             )
-            if classes == ClassOptions.DATASET:
+            self.class_idx_to_name = bidict()
+            self.classes = classes
+            if self.classes == ClassOptions.DATASET:
                 self.class_idx_to_name[dataset_idx] = dataname
-            elif classes == ClassOptions.LABEL_BAG:
+
+            elif self.classes == ClassOptions.LABEL_BAG:
                 if label_representation != LabelRepresentation.BINARY:
-                    self.class_idx_to_name = dict(enumerate(["background", *class_list]))
+                    self.class_idx_to_name = bidict(
+                        enumerate(["background", *class_list])
+                    )
                 else:
-                    self.class_idx_to_name = dict(enumerate(class_list))
+                    self.class_idx_to_name = bidict(enumerate(class_list))
+        self.sample_requests = sample_requests
+        self.sample_requests_ids = self._parse_sample_requests(sample_requests)
         super().__init__(cellmap_datasets)
+
+    def _parse_sample_requests(self, sample_requests) -> list[torch.Tensor]:
+        parsed_sample_requests = []
+        if sample_requests is not None:
+            if self.classes == ClassOptions.DATASET:
+                parsed_sample_requests = torch.tensor(
+                    [
+                        self.class_idx_to_name.inv[example]
+                        for example in sample_requests
+                    ],
+                    dtype=torch.long,
+                )
+            elif self.classes == ClassOptions.LABEL_BAG:
+                for example in sample_requests:
+                    parsed_sample_requests.append(
+                        torch.tensor(
+                            sorted([self.class_idx_to_name.inv[b] for b in example]),
+                            dtype=torch.long,
+                        )
+                    )
+        return parsed_sample_requests
 
 
 class CellMapDataset3Das2D(ConcatDataset):

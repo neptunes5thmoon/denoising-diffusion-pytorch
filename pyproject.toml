@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "accelerate",
+    "bidict",
     "einops",
     "ema-pytorch>=0.4.2",
     "more-itertools",
