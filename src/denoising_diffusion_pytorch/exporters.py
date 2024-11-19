@@ -22,7 +22,9 @@ def get_next_sample(existing: Sequence[str], digits=None):
         next_sample = 0
         if digits is None:
             digits = 5
-            logger.info(f"Number of digits not specified and no strings given to derive from. Defaulting to {digits}.")
+            logger.info(
+                f"Number of digits not specified and no strings given to derive from. Defaulting to {digits}."
+            )
     else:
         next_sample = max(int(s) for s in list(existing)) + 1
         if digits is None:
@@ -35,7 +37,7 @@ def get_next_sample(existing: Sequence[str], digits=None):
 
 
 def convert_color_to_float(
-    color: Union[Tuple[int, int, int], Tuple[float, float, float]]
+    color: Union[Tuple[int, int, int], Tuple[float, float, float]],
 ) -> Tuple[float, float, float]:
     if len(color) != 3:
         msg = f"Color tuple {color} is not of length 3"
@@ -60,8 +62,12 @@ def convert_color_to_float(
         raise TypeError(msg)
 
 
-def adjust_range(img: torch.Tensor, range_in=(-1, 1), range_out=(0, 255)) -> torch.Tensor:
-    img = (img - range_in[0]) / (range_in[1] - range_in[0]) * (range_out[1] - range_out[0]) + range_out[0]
+def adjust_range(
+    img: torch.Tensor, range_in=(-1, 1), range_out=(0, 255)
+) -> torch.Tensor:
+    img = (img - range_in[0]) / (range_in[1] - range_in[0]) * (
+        range_out[1] - range_out[0]
+    ) + range_out[0]
     return img.clamp_(range_out[0], range_out[1])
 
 
@@ -75,6 +81,70 @@ def to_cpu(img: torch.Tensor) -> torch.Tensor:
 
 def to_dtype(img: torch.Tensor, dtype=torch.uint8) -> torch.Tensor:
     return img.to(dtype)
+
+
+def draw_square(arr, pos_y, pos_x, side_length, color):
+    if isinstance(arr, np.ndarray):
+        square = np.array(color)[:, None, None] * np.ones((3, side_length, side_length))
+    else:
+        square = torch.tensor(color)[:, None, None] * torch.ones(
+            (3, side_length, side_length)
+        )
+    arr[:, pos_y : pos_y + side_length, pos_x : pos_x + side_length] = square
+    return arr
+
+
+def annotate_single_image(
+    img: Union[torch.Tensor, np.ndarray], colors: list[tuple[int]]
+) -> Union[torch.Tensor, np.ndarray]:
+    width = img.shape[2]
+    height = img.shape[1]
+    if img.shape[0] == 1:
+        img = img.repeat(3, 1, 1)
+    elif img.shape[0] != 3:
+        msg = f"Can't annotate image with {img.shape[0]} channels"
+        raise ValueError(msg)
+    square_size = int(height * 0.05)
+    gap = int(square_size / 4)
+    new_width = width + 2 * gap + square_size
+    new_shape = img.shape[:2] + (new_width,)
+    if isinstance(img, np.ndarray):
+        img_labeled = np.zeros(new_shape, dtype=img.dtype)
+    else:
+        img_labeled = torch.zeros(new_shape, dtype=img.dtype)
+    img_labeled[0 : img.shape[0], 0 : img.shape[1], 0 : img.shape[2]] = img
+    for i, color in enumerate(colors):
+        img_labeled = draw_square(
+            img_labeled,
+            (1 + i) * gap + i * square_size,
+            width + gap,
+            square_size,
+            color,
+        )
+    return img_labeled
+
+
+def annotate_images(
+    img: Union[torch.Tensor, np.ndarray], colors: list[list[tuple[int]]]
+):
+    annotated_images = []
+    if img.ndim == 3:
+        if len(colors) > 1:
+            msg = "Single image provided but several color lists given for annotation."
+            raise ValueError(msg)
+        img = annotate_single_image(img, colors[0])
+    else:
+        for i in range(img.shape[0]):
+            if i > len(colors) - 1:
+                color = []
+            else:
+                color = colors[i]
+            annotated_images.append(annotate_single_image(img[i], color))
+    if isinstance(img, np.ndarray):
+        annotated_images = np.stack(annotated_images)
+    else:
+        annotated_images = torch.stack(annotated_images)
+    return annotated_images
 
 
 def griddify(img: Union[torch.Tensor, np.ndarray]) -> Union[torch.Tensor, np.ndarray]:
@@ -131,7 +201,11 @@ def rgb_labels(img: np.array, colors: Optional[Sequence[Tuple[float, float, floa
     return rgb_image
 
 
-def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]]] = None, color_threshold=0):
+def colorize(
+    img: np.array,
+    colors: Optional[Sequence[Tuple[float, float, float]]] = None,
+    color_threshold=0,
+):
     # img ch, x, y
     if img.ndim == 4:  # s, ch, x, y
         color_axis = 1
@@ -168,8 +242,12 @@ def colorize(img: np.array, colors: Optional[Sequence[Tuple[float, float, float]
 
 class ProcessOptions(Enum):
     TO_UINT8 = partial(to_dtype, dtype=torch.uint8)
-    ADJUST_RANGE_0_1_TO_0_255 = partial(adjust_range, range_in=(0, 1), range_out=(0, 255))
-    ADJUST_RANGE_NEG1_1_TO_0_255 = partial(adjust_range, range_in=(-1, 1), range_out=(0, 255))
+    ADJUST_RANGE_0_1_TO_0_255 = partial(
+        adjust_range, range_in=(0, 1), range_out=(0, 255)
+    )
+    ADJUST_RANGE_NEG1_1_TO_0_255 = partial(
+        adjust_range, range_in=(-1, 1), range_out=(0, 255)
+    )
     TO_NUMPY = partial(to_numpy)
     TO_CPU = partial(to_cpu)
     GRIDDIFY = partial(griddify)
@@ -177,6 +255,7 @@ class ProcessOptions(Enum):
     MAKE_LABELS = partial(make_labels, add_bg=False)
     RGB_LABELS = partial(rgb_labels)
     COLORIZE = partial(colorize)
+    ANNOTATE_IMAGES = partial(annotate_images)
 
     def __call__(self, *args, **kwargs):
         return self.value(*args, **kwargs)
@@ -188,13 +267,17 @@ ProcessOptionsNames = Literal[tuple(e.name for e in ProcessOptions)]
 class SampleExporter:
     def __init__(
         self,
-        channel_assignment: Dict[str, Tuple[Tuple[int, int, int], Sequence[Union[None, ProcessOptionsNames]]]],
+        channel_assignment: Dict[
+            str, Tuple[Tuple[int, int, int], Sequence[Union[None, ProcessOptionsNames]]]
+        ],
         sample_digits: int = 5,
         file_format: Literal[".zarr", ".png"] = ".zarr",
         sample_batch_size: int = 1,
         colors=None,
         threshold=0,
         dir="samples",
+        annotation_colors: Optional[dict[str, Tuple[int, int, int]]] = None,
+        annotations: Optional[Sequence[Sequence[str]]] = None,
     ):
         self.sample_digits = sample_digits
         self.channel_assignment = channel_assignment
@@ -208,9 +291,13 @@ class SampleExporter:
             for color in colors:
                 self.colors.append(convert_color_to_float(color))
         self.threshold = threshold
+        self.annotation_colors = annotation_colors
+        self.annotations = annotations
 
     def _make_dir_zarr(self, path):
-        zarr_grp = zarr.group(store=zarr.DirectoryStore(os.path.join(path, f"{self.dir_name}.zarr")))
+        zarr_grp = zarr.group(
+            store=zarr.DirectoryStore(os.path.join(path, f"{self.dir_name}.zarr"))
+        )
         next_sample = get_next_sample(zarr_grp.keys(), digits=self.sample_digits)
         sample_grp = zarr_grp.require_group(next_sample)
         return sample_grp
@@ -221,7 +308,9 @@ class SampleExporter:
     def _make_dir_png(self, path):
         sample_path = os.path.join(path, self.dir_name)
         os.makedirs(sample_path, exist_ok=True)
-        next_sample = get_next_sample(os.listdir(sample_path), digits=self.sample_digits)
+        next_sample = get_next_sample(
+            os.listdir(sample_path), digits=self.sample_digits
+        )
         sample_dir = os.path.join(sample_path, next_sample)
         os.makedirs(sample_dir)
         return sample_dir
@@ -231,11 +320,21 @@ class SampleExporter:
         fp = os.path.join(path, f"{name}.png")
         img.save(fp, format="PNG")
 
+    def _construct_annotation_color_sequence(self):
+        color_sequence = []
+        for annotation in self.annotations:
+            color_sequence.append([])
+            for ann in annotation:
+                color_sequence[-1].append(self.annotation_colors[ann])
+        return color_sequence
+
     def save_sample(self, parent_path, samples) -> int:
         if samples.shape[0] < self.sample_batch_size:
             msg = f"Can't export sample with `sample_batch_size` ({self.sample_batch_size}) larger than number of samples ({samples.shape[0]})"
             raise ValueError(msg)
-        for batch_start in range(0, samples.shape[0] - self.sample_batch_size + 1, self.sample_batch_size):
+        for batch_start in range(
+            0, samples.shape[0] - self.sample_batch_size + 1, self.sample_batch_size
+        ):
             sample = samples[batch_start : batch_start + self.sample_batch_size]
             if self.file_format == ".zarr":
                 sample_path = self._make_dir_zarr(parent_path)
@@ -244,24 +343,44 @@ class SampleExporter:
             else:
                 msg = f"Unknown file format ({self.file_format}) requested."
                 raise ValueError(msg)
-            for img_name, (channel_slice, processfuncs) in self.channel_assignment.items():
+            for img_name, (
+                channel_slice,
+                processfuncs,
+            ) in self.channel_assignment.items():
                 img_data = sample[:, slice(*channel_slice), ...]
                 for func_option in processfuncs:
-                    logger.debug(f"Processing image {img_name} with shape {img_data.shape} with {func_option}.")
-                    logger.debug(f"Image has min: {img_data.min()} and max {img_data.max()}")
+                    logger.debug(
+                        f"Processing image {img_name} with shape {img_data.shape} with {func_option}."
+                    )
+                    logger.debug(
+                        f"Image has min: {img_data.min()} and max {img_data.max()}"
+                    )
+
                     if func_option is not None:
                         func_option = ProcessOptions[func_option]
                         if func_option == ProcessOptions.COLORIZE:
-                            img_data = func_option(img_data, colors=self.colors, color_threshold=self.threshold)
+                            img_data = func_option(
+                                img_data,
+                                colors=self.colors,
+                                color_threshold=self.threshold,
+                            )
                         elif func_option == ProcessOptions.RGB_LABELS:
                             img_data = func_option(img_data, colors=self.colors)
                         elif (
                             func_option == ProcessOptions.MAKE_LABELS
                             or func_option == ProcessOptions.MAKE_LABELS_WITH_ADDED_BG
                         ):
-                            img_data = func_option(img_data, label_threshold=self.threshold)
+                            img_data = func_option(
+                                img_data, label_threshold=self.threshold
+                            )
+                        elif func_option == ProcessOptions.ANNOTATE_IMAGES:
+                            img_data = func_option(
+                                img_data,
+                                colors=self._construct_annotation_color_sequence(),
+                            )
                         else:
                             img_data = func_option(img_data)
+
                 if self.file_format == ".zarr":
                     self._save_img_zarr(sample_path, img_name, img_data)
                 elif self.file_format == ".png":
