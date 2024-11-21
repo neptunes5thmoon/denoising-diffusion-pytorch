@@ -7,7 +7,7 @@ import random
 from enum import Enum
 from functools import partial
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Union
 
 import cellmap_utils_kit
 import dask
@@ -23,7 +23,7 @@ from datatree import DataTree
 from fibsem_tools import read
 from PIL import Image
 from torch import Tensor, nn
-from torch.utils.data import ConcatDataset, Dataset, default_collate
+from torch.utils.data import ConcatDataset, Dataset, IterableDataset, default_collate
 from torchvision.transforms import v2 as transforms
 
 from denoising_diffusion_pytorch.convenience import exists
@@ -900,6 +900,44 @@ class AnnotationCrop3Das2D(Dataset):
         if self.classes is not None:
             res["classes"] = torch.Tensor(res["classes"])
         return res
+
+
+class RandomZarrPatchDataset(IterableDataset):
+    def __init__(self, data_path: str, image_size: Union[int, Sequence[int, ...]]):
+        super().__init__()
+        self.data = zarr.open(data_path, "r")
+        if isinstance(image_size, int):
+            self.image_size = (image_size,) * self.data.ndim
+        else:
+            self.image_size = image_size
+
+    def __iter__(self):
+        while True:
+            if self.data.ndim > len(self.image_size):
+                image_size = [
+                    1,
+                ] * self.data.ndim
+                keep_axes = random.sample(range(self.data.ndim), len(self.image_size))
+                for ax, im_dim in zip(keep_axes, self.image_size):
+                    image_size[ax] = im_dim
+                added_axes = [ax for ax in range(self.data.ndim) if ax not in keep_axes]
+            else:
+                image_size = self.image_size
+                added_axes = []
+            logger.debug(f"Requesting image of size {image_size}")
+            random_location = []
+            logger.debug(f"Keep axes {keep_axes}")
+            for ax, shape in enumerate(image_size):
+                random_location.append(random.randint(0, self.data.shape[ax] - shape))
+            logger.debug(f"Requesting image at {random_location}")
+            random_location_slice = tuple(
+                slice(loc, loc + shape) for loc, shape in zip(random_location, image_size)
+            )
+            data = self.data[random_location_slice]
+            logger.debug(f"Getting shape {data.shape}")
+            data = np.squeeze(data, tuple(added_axes))
+            logger.debug(f"Squeezed shape {data.shape} ({added_axes})")
+            yield data
 
 
 class BatchedZarrSamples(Dataset):
